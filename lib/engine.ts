@@ -1,7 +1,7 @@
-import { itemArt } from "./item-art";
 import { Multiplayer } from "./multiplayer";
 import { miningDuration, weapon } from "./combat";
-import { InventoryPack, type PackData } from "./inventory";
+import { InventoryPack, type PackData, type Stack } from "./inventory";
+import { applyCraftResult, type SlotRef } from "./inventory-gestures";
 import { BlockCracks, DroppedItems, handSwing, type DropData } from "./interaction-effects";
 import { ignitePortal } from "./portals";
 import * as THREE from "three";
@@ -12,8 +12,12 @@ import { Mob, Dragon, cube, MOB_NAMES, type MobKind, disposeEntityMaterials } fr
 import { AudioFX } from "./audio";
 import { FluidSystem } from "./fluid";
 import { Atmosphere } from "./atmosphere";
-import { SkinModel, readSkin } from "./skin-model";
+import { SkinModel, readSkin, type FirstPersonArm } from "./skin-model";
 import { DEFAULT_SETTINGS, DEFAULT_BINDINGS, type Action, type GameSettings } from "./settings";
+import { normalizeDifficulty, difficultyRules, type Difficulty } from "./difficulty";
+import { HorrorDirector, type HorrorEvent, type HorrorSave } from "./horror-director";
+import { HorrorPresentation } from "./horror-presentation";
+import { placeHorrorEvent } from "./horror-placement";
 export type { GameSettings } from "./settings";
 export type Snapshot = {
   needsCapture: boolean;
@@ -24,6 +28,8 @@ export type Snapshot = {
   active: boolean;
   started: boolean;
   mode: Mode;
+  difficulty: Difficulty;
+  horrorOverlay: number;
   dimension: Dimension;
   health: number;
   food: number;
@@ -85,6 +91,8 @@ type SavedGame = {
   v: number;
   seed: number;
   mode: string;
+  difficulty?: Difficulty;
+  horror?: HorrorSave;
   dimension: Dimension;
   position: number[];
   yaw?: number;
@@ -120,6 +128,9 @@ export class Game extends WorldRenderer {
   active = false;
   started = false;
   mode: Mode = "survival";
+  difficulty: Difficulty = "normal";
+  horrorDirector = new HorrorDirector();
+  horror: HorrorPresentation;
   position = new THREE.Vector3(8, 20, 22);
   velocity = new THREE.Vector3();
   yaw = 0.22;
@@ -145,6 +156,7 @@ export class Game extends WorldRenderer {
   clock = 90;
   stepTimer = 0;
   hungerTimer = 0;
+  regenerationTimer = 0;
   damageTimer = 0;
   saveTimer = 0;
   updateTimer = 0;
@@ -196,6 +208,7 @@ export class Game extends WorldRenderer {
   onMenu: (panel: string) => void;
   iconAtlas: string = "";
   heldId = -1;
+  viewArm: FirstPersonArm | null = null;
   constructor(
     mount: HTMLElement,
     onUpdate: (s: Snapshot) => void,
@@ -222,7 +235,13 @@ export class Game extends WorldRenderer {
     this.torch = new THREE.PointLight("#ffd18b", 0, 13, 2);
     this.scene.add(this.torch);
     this.fluid = new FluidSystem(this.world);
+    const fluidEdit = this.world.onEdit;
+    this.world.onEdit = (x, y, z) => {
+      fluidEdit?.(x, y, z);
+      this.adventure.furnaceBlockChanged(x, y, z);
+    };
     this.atmosphere = new Atmosphere(this);
+    this.horror = new HorrorPresentation(this.scene, this.camera, this.audio);
     void this.reloadSkin();
     window.addEventListener("blockland-skin", this.skinChanged);
     let savedSettings: Partial<GameSettings> = {};
@@ -274,6 +293,8 @@ export class Game extends WorldRenderer {
       active: this.active,
       started: this.started,
       mode: this.mode,
+      difficulty: this.difficulty ?? "normal",
+      horrorOverlay: this.horror?.overlay ?? 0,
       dimension: this.world.dimension,
       health: this.health,
       food: this.food,
@@ -326,7 +347,49 @@ export class Game extends WorldRenderer {
     if (!this.visited.includes("end")) return "Portal Endu: X 20, Z −15";
     return "Wróć do Endu i pokonaj smoka";
   }
-  start(mode: Mode, resume = false, seed = 24680) {
+  setDifficulty(value: Difficulty, fromServer = false) {
+    const next = normalizeDifficulty(value);
+    if (this.net && !fromServer) {
+      this.net.changeDifficulty(next);
+      return;
+    }
+    if (this.difficulty !== next) {
+      this.horror?.clear();
+      this.horrorDirector?.reset("local");
+      this.regenerationTimer = 0;
+    }
+    this.difficulty = next;
+    this.emit();
+  }
+  receiveHorror(event: HorrorEvent) {
+    if (this.difficulty !== "horror" || !this.active || this.needsCapture || this.health <= 0) return;
+    if (event.dimension !== this.world.dimension) return;
+    this.horror?.event(event);
+  }
+  updateHorror(dt: number) {
+    const active = this.active && !this.needsCapture && this.health > 0 && !document.hidden && (!this.net || this.net.connected);
+    if (!this.net && this.difficulty === "horror") {
+      const underground = this.world.surface(this.position.x, this.position.z) - this.position.y > 5;
+      for (const event of this.horrorDirector.tick(dt, [{
+        id: "local", p: this.position.toArray(), yaw: this.yaw, pitch: this.pitch,
+        dimension: this.world.dimension, difficulty: this.difficulty, active,
+        alive: this.health > 0, night: this.clock % 600 > 350, underground,
+      }])) {
+        if (["watcher", "silhouette", "approach"].includes(event.kind)) {
+          placeHorrorEvent(event, this.position.toArray(), underground, this.world);
+        }
+        this.receiveHorror(event);
+      }
+    }
+    this.horror?.update(dt, {
+      enabled: this.difficulty === "horror", active, dimension: this.world.dimension,
+      player: this.position, yaw: this.yaw, pitch: this.pitch,
+      time: this.net?.horrorClock ?? this.horrorDirector.elapsed,
+      volume: this.settings.horrorVolume, jumpscares: this.settings.horrorJumpscares,
+      reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    });
+  }
+  start(mode: Mode, resume = false, seed = 24680, difficulty: Difficulty = this.difficulty) {
     if (this.net) {
       this.net.close();
       this.net = null;
@@ -337,6 +400,9 @@ export class Game extends WorldRenderer {
         if (!this.load()) return;
       }
       else {
+        this.difficulty = normalizeDifficulty(difficulty);
+        this.horrorDirector = new HorrorDirector(seed);
+        this.hungerTimer = this.regenerationTimer = 0;
         this.mode = mode;
         this.adventure.reset();
         this.clearDynamic();
@@ -437,6 +503,7 @@ export class Game extends WorldRenderer {
     this.needsCapture = false;
     this.swingTime = 0;
     this.active = false;
+    this.horror?.clear();
     this.pauseReason = panel;
     this.sprinting = false;
     this.keys.clear();
@@ -461,6 +528,9 @@ export class Game extends WorldRenderer {
     this.emit();
   }
   respawn() {
+    this.horror?.clear();
+    this.horrorDirector?.reset("local");
+    this.hungerTimer = this.regenerationTimer = 0;
     this.net?.request({ type: "respawn" });
     this.pack.reset();
     this.inventory = {};
@@ -515,16 +585,16 @@ export class Game extends WorldRenderer {
     this.pack.move(fromArea, from, toArea, to);
     this.commitPack();
   }
-  takeCraft(quick = false) {
+  takeCraft(quick = false, to?: SlotRef, expected?: Stack | null) {
     if (this.net) {
       if (this.net.pending.size) return;
       this.net.sendProfile();
-      this.net.request({ type: "craft", quick }, (d) => {
+      this.net.request({ type: "craft", quick, to, expected }, (d) => {
         if (d.ok) this.audio.play("craft");
       });
       return;
     }
-    if (this.pack.takeResult(this.nearBlock(29), quick)) {
+    if (applyCraftResult(this.pack, { quick, to, expected })) {
       this.audio.play("craft");
       this.commitPack();
     }
@@ -661,6 +731,7 @@ export class Game extends WorldRenderer {
     this.emit();
   }
   clearDynamic() {
+    this.horror?.clear();
     for (const m of this.mobs) {
       this.scene.remove(m.group);
       m.dispose();
@@ -831,7 +902,7 @@ export class Game extends WorldRenderer {
     n = Math.max(
       1,
       Math.ceil(
-        n *
+        n * (!this.net ? difficultyRules(this.difficulty).environmentDamage : 1) *
           (this.adventure.data.armor === 122 ? 0.5 : this.adventure.data.armor === 121 ? 0.72 : 1),
       ),
     );
@@ -895,10 +966,11 @@ export class Game extends WorldRenderer {
       return;
     }
     if (this.mode !== "creative") this.inventory[113]--;
-    const dir = this.camera.getWorldDirection(new THREE.Vector3()),
-      origin = this.camera.position.clone().addScaledVector(dir, 0.6);
+    const ray = this.playerEyeRay(),
+      dir = ray.direction,
+      origin = ray.origin.clone().addScaledVector(dir, 0.6);
     const mesh = cube(this.scene, "#cbbb8f", origin.x, origin.y, origin.z, 0.06, 0.06, 0.75);
-    mesh.quaternion.copy(this.camera.quaternion);
+    mesh.quaternion.setFromEuler(new THREE.Euler(this.pitch, this.yaw, 0, "YXZ"));
     this.projectiles.push({
       mesh,
       velocity: dir.multiplyScalar(37),
@@ -911,9 +983,19 @@ export class Game extends WorldRenderer {
     this.attackCooldown = 0.45;
     this.emit();
   }
+  /** Gameplay aiming comes from the player's eyes, regardless of the F5 display camera. */
+  playerEyeRay() {
+    return new THREE.Ray(
+      this.position.clone().add(new THREE.Vector3(0, this.eyeHeight, 0)),
+      new THREE.Vector3(
+        -Math.sin(this.yaw) * Math.cos(this.pitch),
+        Math.sin(this.pitch),
+        -Math.cos(this.yaw) * Math.cos(this.pitch),
+      ),
+    );
+  }
   raycast(max = 6): Target | null {
-    const dir = this.camera.getWorldDirection(new THREE.Vector3()),
-      p = this.camera.position;
+    const { direction: dir, origin: p } = this.playerEyeRay();
     let px = Math.floor(p.x),
       py = Math.floor(p.y),
       pz = Math.floor(p.z);
@@ -934,14 +1016,13 @@ export class Game extends WorldRenderer {
     if (this.attackCooldown > 0) return false;
     this.swingTime = 0.36;
     if (this.net) return this.net.attack();
-    const dir = this.camera.getWorldDirection(new THREE.Vector3()),
-      ray = new THREE.Ray(this.camera.position, dir);
-    let closest = 4.5,
+    const ray = this.playerEyeRay();
+    let closest = weapon(this.hotbar[this.selected]).reach,
       hit: Mob | Crystal | Dragon | null = null;
     const test = (obj: Mob | Crystal | Dragon, pos: THREE.Vector3, r: number) => {
       const at = ray.intersectSphere(new THREE.Sphere(pos, r), new THREE.Vector3());
       if (at) {
-        const dist = at.distanceTo(this.camera.position);
+        const dist = at.distanceTo(ray.origin);
         if (dist < closest && (!this.target || dist < this.target.distance)) {
           closest = dist;
           hit = obj;
@@ -991,6 +1072,10 @@ export class Game extends WorldRenderer {
     }
     if (t?.id === 61) {
       this.adventure.openChest(t.x, t.y, t.z);
+      return;
+    }
+    if (t?.id === 29) {
+      this.adventure.openFurnace(t.x, t.y, t.z);
       return;
     }
     if (t?.id === 62) {
@@ -1045,7 +1130,7 @@ export class Game extends WorldRenderer {
       this.actionCooldown = 0.3;
       return;
     }
-    if (t && [28, 29, 30].includes(t.id)) {
+    if (t && [28, 30].includes(t.id)) {
       this.pause("crafting");
       return;
     }
@@ -1224,15 +1309,19 @@ export class Game extends WorldRenderer {
         this.audio.play("step");
         this.stepTimer = sprint ? 0.28 : 0.42;
       }
-      this.hungerTimer += dt * (sprint ? 1.8 : 1);
-    } else this.hungerTimer += dt * 0.25;
-    if (this.mode === "survival" && this.hungerTimer > 25) {
+    }
+    const rules = difficultyRules(this.difficulty);
+    if (!this.net && this.mode === "survival") {
+      this.hungerTimer += dt * ((forward || strafe) && this.grounded ? sprint ? 1.8 : 1 : 0.25) * rules.hungerRate;
+      this.regenerationTimer = this.food > 14 && this.damageTimer <= 0 ? (this.regenerationTimer || 0) + dt : 0;
+      if (this.regenerationTimer >= rules.regenerationSeconds) {
+        this.regenerationTimer = 0;
+        this.health = Math.min(20, this.health + rules.regenerationAmount);
+      }
+    }
+    if (!this.net && this.mode === "survival" && this.hungerTimer > 25) {
       this.food = Math.max(0, this.food - 1);
       this.hungerTimer = 0;
-      if (this.food > 14) {
-        if (this.net) this.net.request({ type: "heal" });
-        else this.health = Math.min(20, this.health + 1);
-      }
       if (this.food === 0) this.damage(1);
     }
     if (inWater && !this.wasInWater) this.audio.play("splash");
@@ -1300,6 +1389,9 @@ export class Game extends WorldRenderer {
   }
   tick = (dt: number) => {
     this.net?.tick(dt);
+    if (!this.net && this.started && !this.preview && !document.hidden &&
+      (this.active || ["furnace", "chest", "inventory", "crafting"].includes(this.pauseReason)))
+      this.adventure.tickFurnaces(dt);
     this.frames++;
     this.frameClock += dt;
     if (this.frameClock > 1) {
@@ -1308,6 +1400,7 @@ export class Game extends WorldRenderer {
       this.frameClock = 0;
     }
     if (!this.active) {
+      this.horror?.clear();
       this.audio.update(0, false, this.world.dimension);
       if (this.avatar) this.avatar.group.visible = false;
       this.atmosphere.tick(
@@ -1346,6 +1439,7 @@ export class Game extends WorldRenderer {
     this.damageFlash = Math.max(0, this.damageFlash - dt);
     this.portalCooldown -= dt;
     this.move(dt);
+    this.updateHorror(dt);
     this.target = this.raycast();
     if (this.target) {
       this.outline.visible = true;
@@ -1456,6 +1550,7 @@ export class Game extends WorldRenderer {
       this.world.biome(this.position.x, this.position.z),
       () => this.audio.play("thunder"),
     );
+    this.audio.music = this.settings.music * (this.difficulty === "horror" ? 0.18 * (1 - (this.horror?.overlay ?? 0)) : 1);
     this.audio.update(this.atmosphere.wet, true, this.world.dimension);
     this.meshTimer += dt;
     if (this.meshTimer > 0.1) {
@@ -1476,56 +1571,20 @@ export class Game extends WorldRenderer {
     }
   };
   updateHand() {
-    const id = this.hotbar[this.selected];
-    if (this.heldId !== id) {
-      this.hand.traverse((o) => {
-        if (o instanceof THREE.Mesh && o.userData.skinArm) o.geometry.dispose();
-        if (o instanceof THREE.Mesh && o.userData.heldSprite) {
-          o.geometry.dispose();
-          const material = o.material as THREE.MeshBasicMaterial;
-          material.map?.dispose();
-          material.dispose();
-        }
-      });
-      this.hand.clear();
-      if (this.avatar) {
-        const arm = this.avatar.armMesh();
-        arm.userData.skinArm = true;
-        arm.position.set(0.4, -0.34, -0.67);
-        arm.scale.set(0.8, 0.8, 0.8);
-        this.hand.add(arm);
-      } else cube(this.hand, "#c39a7f", 0.38, -0.35, -0.65, 0.18, 0.42, 0.2);
-      if (id > 0 && id < BLOCKS.length) {
-        cube(this.hand, item(id).color, 0.36, -0.16, -0.75, 0.3, 0.3, 0.3);
-      } else if (id > 0) {
-        const texture = new THREE.TextureLoader().load(itemArt(id));
-        texture.colorSpace = THREE.SRGBColorSpace;
-        texture.magFilter = THREE.NearestFilter;
-        texture.minFilter = THREE.NearestFilter;
-        const material = new THREE.MeshBasicMaterial({
-          map: texture,
-          transparent: true,
-          alphaTest: 0.1,
-          side: THREE.DoubleSide,
-        });
-        const held = new THREE.Mesh(new THREE.PlaneGeometry(0.43, 0.43), material);
-        held.position.set(0.38, -0.035, -0.7);
-        held.rotation.set(0, -0.2, 0.08);
-        held.userData.heldSprite = true;
-        this.hand.add(held);
-      }
-      this.heldId = id;
+    const id = this.hotbar[this.selected] ?? 0;
+    if (!this.viewArm && this.avatar) {
+      this.viewArm = this.avatar.createFirstPersonArm();
+      this.hand.add(this.viewArm.group);
     }
-    const swing =
-      this.swingTime > 0
-        ? handSwing(1 - this.swingTime / 0.36)
-        : { x: 0, y: 0, z: 0, rx: 0, rz: 0 };
-    this.hand.rotation.set(swing.rx, 0, swing.rz);
-    this.hand.position.set(
-      swing.x,
-      swing.y + (this.settings.viewBob ? Math.sin(this.time * 3) * 0.008 : 0),
-      swing.z,
-    );
+    this.avatar?.setHeldItem(id);
+    this.viewArm?.setHeldItem(id);
+    const swing = this.swingTime > 0
+      ? handSwing(1 - this.swingTime / 0.36)
+      : { x: 0, y: 0, z: 0, rx: 0, rz: 0 };
+    this.hand.rotation.set(0, 0, 0);
+    this.hand.position.set(0, 0, 0);
+    this.viewArm?.pose(swing, this.settings.viewBob ? Math.sin(this.time * 3) * 0.008 : 0, this.camera.fov, this.camera.aspect);
+    this.heldId = id;
     this.hand.visible = this.active && this.perspective === 0;
   }
   updateProjectiles(dt: number) {
@@ -1627,6 +1686,8 @@ export class Game extends WorldRenderer {
     this.settings.volume = clamp(this.settings.volume, 0, 1, 0.5);
     this.settings.music = clamp(this.settings.music, 0, 1, 0.25);
     this.settings.weatherVolume = clamp(this.settings.weatherVolume, 0, 1, 0.3);
+    this.settings.horrorVolume = clamp(this.settings.horrorVolume, 0, 1, 0.65);
+    this.settings.horrorJumpscares = this.settings.horrorJumpscares !== false;
     this.settings.resolution = clamp(this.settings.resolution, 0.5, 2, 1.25);
     this.settings.dayDuration = clamp(this.settings.dayDuration, 120, 1800, 600);
     this.settings.fog = clamp(this.settings.fog, 0.5, 1.5, 1);
@@ -1634,7 +1695,7 @@ export class Game extends WorldRenderer {
     this.radius = this.settings.view;
     this.camera.fov = clamp(this.settings.fov, 50, 100, 72);
     this.camera.updateProjectionMatrix();
-    this.renderer.shadowMap.enabled = !!this.settings.shadows;
+    this.renderer.shadowMap.enabled = this.settings.shader !== "off" && !!this.settings.shadows;
     this.audio.volume = this.settings.volume;
     this.audio.music = this.settings.music;
     this.audio.weatherVolume = this.settings.weatherVolume;
@@ -1648,6 +1709,8 @@ export class Game extends WorldRenderer {
     const generation = ++this.skinGeneration;
     const data = await readSkin();
     if (!this.running || generation !== this.skinGeneration) return;
+    this.viewArm?.dispose();
+    this.viewArm = null;
     if (this.avatar) {
       this.scene.remove(this.avatar.group);
       this.avatar.dispose();
@@ -1685,6 +1748,8 @@ export class Game extends WorldRenderer {
         v: 1,
         seed: this.world.seed,
         mode: this.mode,
+        difficulty: this.difficulty,
+        horror: this.difficulty === "horror" ? this.horrorDirector.save() : undefined,
         dimension: this.world.dimension,
         position: this.position.toArray(),
         yaw: this.yaw,
@@ -1737,6 +1802,10 @@ export class Game extends WorldRenderer {
       throw new Error("Nieprawidłowy zapis");
     this.clearDynamic();
     this.mode = s.mode === "creative" ? "creative" : "survival";
+    this.difficulty = normalizeDifficulty(s.difficulty);
+    this.horrorDirector = new HorrorDirector(Number(s.seed) || 24680);
+    if (this.difficulty === "horror" && s.horror) this.horrorDirector.restore(s.horror);
+    this.hungerTimer = this.regenerationTimer = 0;
     this.world.seed = Number(s.seed) || 24680;
     this.world.edits = typeof s.edits === "object" && s.edits ? s.edits : {};
     for (const key of Object.keys(this.world.edits))
@@ -1855,7 +1924,7 @@ export class Game extends WorldRenderer {
     if (!this.active) {
       const matching =
         action === this.pauseReason ||
-        (action === "inventory" && ["crafting", "chest"].includes(this.pauseReason));
+        (action === "inventory" && ["crafting", "chest", "furnace"].includes(this.pauseReason));
       if (
         this.started &&
         !this.preview &&
@@ -2063,9 +2132,12 @@ export class Game extends WorldRenderer {
     window.removeEventListener("mouseup", this.mouseUp);
     window.removeEventListener("blockland-skin", this.skinChanged);
     this.skinGeneration++;
+    this.horror?.dispose();
     this.audio.dispose();
     this.atmosphere.dispose();
     this.renderScene = undefined;
+    this.viewArm?.dispose();
+    this.viewArm = null;
     this.avatar?.dispose();
     this.clearDynamic();
     this.cracks.dispose();

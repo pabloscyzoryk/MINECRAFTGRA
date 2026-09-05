@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { HeldItemModel, type HeldTextureFactory } from "./held-item";
+import type { HandSwingPose } from "./interaction-effects";
 export type Face = "front" | "back" | "left" | "right" | "top" | "bottom";
 export type Part = "head" | "body" | "armR" | "armL" | "legR" | "legL" | "cape";
 export const PART_NAMES: Record<Part, string> = {
@@ -66,7 +68,7 @@ function canvas(w: number, h: number) {
   c.height = h;
   return c;
 }
-export function defaultSkin(): SkinData {
+function createDefaultSkin(legacy = false): SkinData {
   const skin = canvas(64, 64),
     cape = canvas(64, 32),
     ctx = skin.getContext("2d")!;
@@ -82,13 +84,18 @@ export function defaultSkin(): SkinData {
           ctx.fillRect(x + (i % w), y + Math.floor(i / w), 1, 1);
         }
       }
-      if (part.startsWith("arm")) {
+      if (part.startsWith("arm") && (legacy || face !== "top")) {
         ctx.fillStyle = "#bd8c66";
         ctx.fillRect(x, y + h - 4, w, 4);
       }
-      if (part.startsWith("leg")) {
+      if (part.startsWith("leg") && (legacy || face !== "top")) {
         ctx.fillStyle = "#253137";
-        ctx.fillRect(x, y + h - 2, w, 2);
+        if (!legacy && face === "bottom") ctx.fillRect(x, y, w, h);
+        else ctx.fillRect(x, y + h - 2, w, 2);
+      }
+      if (!legacy && part === "body" && face === "top") {
+        ctx.fillStyle = "#b88663";
+        ctx.fillRect(x + 2, y, w - 4, h);
       }
       if (part === "head") {
         if (face === "top" || face === "back") {
@@ -127,6 +134,20 @@ export function defaultSkin(): SkinData {
   }
   return { skin, cape, capeEnabled: true };
 }
+export function defaultSkin(): SkinData {
+  return createDefaultSkin();
+}
+/** Upgrade only an exact, generated legacy skin; any painted pixel preserves the user's work. */
+export function migrateLegacyDefaultSkin(data: SkinData) {
+  const ctx = data.skin.getContext("2d")!;
+  const actual = ctx.getImageData(0, 0, 64, 64).data;
+  const legacy = createDefaultSkin(true).skin.getContext("2d")!.getImageData(0, 0, 64, 64).data;
+  if (actual.length !== legacy.length || actual.some((value, index) => value !== legacy[index]))
+    return false;
+  ctx.clearRect(0, 0, 64, 64);
+  ctx.drawImage(defaultSkin().skin, 0, 0);
+  return true;
+}
 let cachedSkin: { skin: string; cape: string; capeEnabled: boolean } | null = null;
 export async function readSkin() {
   const data = defaultSkin();
@@ -160,6 +181,16 @@ export async function readSkin() {
         }),
       );
       data.capeEnabled = !!s.capeEnabled;
+      if (migrateLegacyDefaultSkin(data)) {
+        cachedSkin = {
+          skin: data.skin.toDataURL("image/png"),
+          cape: data.cape.toDataURL("image/png"),
+          capeEnabled: data.capeEnabled,
+        };
+        try {
+          localStorage.setItem("blockland.skin", JSON.stringify(cachedSkin));
+        } catch {}
+      }
     }
   } catch {}
   return data;
@@ -209,6 +240,8 @@ export class SkinModel {
   head = new THREE.Group();
   capePivot = new THREE.Group();
   joints: Record<string, THREE.Group> = {};
+  grip = new THREE.Group();
+  heldItem = new HeldItemModel();
   constructor(public data: SkinData) {
     this.texture = new THREE.CanvasTexture(data.skin);
     this.texture.magFilter = THREE.NearestFilter;
@@ -267,6 +300,11 @@ export class SkinModel {
     this.parts.set("cape0", cape);
     this.capePivot.visible = data.capeEnabled;
     this.capePivot.rotation.x = 0.16;
+    this.grip.name = "right-wrist-grip";
+    this.grip.position.set(0, -10 / 16, 0.11);
+    this.grip.rotation.x = 0.5;
+    this.grip.add(this.heldItem.group);
+    this.joints.armR.add(this.grip);
   }
   refresh() {
     this.texture.needsUpdate = true;
@@ -306,11 +344,80 @@ export class SkinModel {
     mesh.rotation.set(-0.18, 0, Math.PI - 0.17);
     return mesh;
   }
+  setHeldItem(id: number) {
+    this.heldItem.set(id);
+  }
+  createFirstPersonArm(textureFactory?: HeldTextureFactory) {
+    return new FirstPersonArm(this.material, textureFactory);
+  }
   dispose() {
+    this.heldItem.dispose();
     this.parts.forEach((m) => m.geometry.dispose());
     this.material.dispose();
     this.capeMaterial.dispose();
     this.texture.dispose();
     this.capeTexture.dispose();
+  }
+}
+
+/** The shoulder stays below the frame; only this joint rotates, so the arm never floats away. */
+export class FirstPersonArm {
+  group = new THREE.Group();
+  shoulder = new THREE.Group();
+  wrist = new THREE.Group();
+  heldItem: HeldItemModel;
+  meshes: THREE.Mesh[] = [];
+  readonly length = Math.hypot(0.14, 0.73, 0.55);
+  private direction = new THREE.Vector3();
+  private down = new THREE.Vector3(0, -1, 0);
+  private itemRotation = new THREE.Quaternion();
+  private disposed = false;
+  constructor(material: THREE.MeshStandardMaterial, textureFactory?: HeldTextureFactory) {
+    this.group.name = "first-person-arm";
+    this.shoulder.name = "anchored-shoulder";
+    this.shoulder.position.set(0.52, -0.93, -0.15);
+    this.group.add(this.shoulder);
+    for (let layer = 0; layer < 2; layer++) {
+      const mesh = new THREE.Mesh(boxGeometry("armR", layer), material);
+      mesh.position.y = -this.length / 2;
+      mesh.scale.set(0.82, this.length / 0.75, 0.82);
+      mesh.frustumCulled = false;
+      this.shoulder.add(mesh);
+      this.meshes.push(mesh);
+    }
+    this.wrist.name = "first-person-wrist";
+    this.wrist.position.set(0, -this.length, 0);
+    this.shoulder.add(this.wrist);
+    this.heldItem = new HeldItemModel(textureFactory);
+    this.heldItem.group.scale.setScalar(0.62);
+    this.wrist.add(this.heldItem.group);
+    this.pose({ x: 0, y: 0, z: 0, rx: 0, rz: 0 });
+  }
+  setHeldItem(id: number) {
+    this.heldItem.set(id);
+  }
+  pose(swing: HandSwingPose, bob = 0, fov = 72, aspect = 16 / 9) {
+    const projection =
+      Math.tan(THREE.MathUtils.degToRad(Math.max(50, Math.min(100, fov))) / 2) /
+      Math.tan(THREE.MathUtils.degToRad(72) / 2);
+    this.group.scale.set(projection * Math.min(1, Math.max(0.35, aspect) / (4 / 3)), projection, 1);
+    this.direction
+      .set(0.38 + swing.x * 0.7, -0.2 + swing.y * 0.7 + bob, -0.7 + swing.z * 0.55)
+      .sub(this.shoulder.position)
+      .normalize();
+    this.shoulder.quaternion.setFromUnitVectors(this.down, this.direction);
+    // Keep the held item's grip at the wrist while its blade remains readable to the camera.
+    this.itemRotation.setFromEuler(
+      new THREE.Euler(-0.15 + swing.rx * 0.35, -0.3, -0.12 + swing.rz * 0.4),
+    );
+    this.wrist.quaternion.copy(this.shoulder.quaternion).invert().multiply(this.itemRotation);
+  }
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.heldItem.dispose();
+    this.meshes.forEach((mesh) => mesh.geometry.dispose());
+    this.group.removeFromParent();
+    this.group.clear();
   }
 }

@@ -77,15 +77,20 @@ export function presetSkin(index: number) {
       ctx.fillRect(x, y, w, h);
       ctx.fillStyle = "#ffffff12";
       for (let py = 1; py < h; py += 3) ctx.fillRect(x, y + py, w, 1);
-      if (part.startsWith("arm")) {
+      if (part.startsWith("arm") && face !== "top") {
         ctx.fillStyle = p.skin;
         ctx.fillRect(x, y + h - 4, w, 4);
       }
-      if (part.startsWith("leg")) {
+      if (part.startsWith("leg") && face !== "top") {
         ctx.fillStyle = "#2a3034";
-        ctx.fillRect(x, y + h - 2, w, 2);
+        if (face === "bottom") ctx.fillRect(x, y, w, h);
+        else ctx.fillRect(x, y + h - 2, w, 2);
       }
-      if (part === "body") {
+      if (part === "body" && face === "top") {
+        ctx.fillStyle = p.skin;
+        ctx.fillRect(x + 2, y, w - 4, h);
+      }
+      if (part === "body" && face !== "top" && face !== "bottom") {
         ctx.fillStyle = p.accent;
         ctx.fillRect(x, y + h - 3, w, 1);
         if (face === "front") {

@@ -4,6 +4,7 @@ import { Room } from "../server/room";
 import { weapon, miningDuration } from "../lib/combat";
 import { blankChest, clickStack, chestCounts } from "../lib/chest-slots";
 import { validNick, validVoice, validToken } from "../lib/net-protocol";
+import { InventoryPack } from "../lib/inventory";
 function fixture() {
   let now = 100000;
   const messages: { id: string; data: any }[] = [];
@@ -26,7 +27,14 @@ function fixture() {
 }
 test("New online characters have empty inventories and unique names", () => {
   const { r, a, messages } = fixture();
-  assert.deepEqual(a.profile, {});
+  assert.deepEqual(a.profile.inventory ?? {}, {});
+  assert.equal(a.profile.difficulty, "normal");
+  assert.equal(a.profile.food, 20);
+  const pack = new InventoryPack();
+  pack.restore((a.profile.pack ?? {}) as any);
+  assert(pack.slots.every((s) => s === null));
+  assert(pack.grid.every((s) => s === null));
+  assert.equal(pack.cursor, null);
   r.join("c", "Alicja", undefined);
   assert.equal(messages.at(-1)?.data.fatal, true);
   assert(!r.players.has("c"));

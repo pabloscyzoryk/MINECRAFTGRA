@@ -10,7 +10,7 @@
 
 Wybierz **Tryb wieloosobowy**, wpisz nick i zaproś znajomych pod ten sam adres. Publiczne wdrożenie korzysta z **Vercel Hobby** i istniejącej bazy **Redis Cloud Free 30 MB**. Zmiany wysłane do gałęzi `main` są automatycznie wdrażane.
 
-[Pierwsze kroki](#pierwsze-kroki) · [Sterowanie](#sterowanie) · [Multiplayer i rozmowy](#multiplayer-i-rozmowy) · [Uruchomienie lokalne](#uruchomienie-lokalne) · [Wdrożenie na Vercelu](docs/DEPLOYMENT.md)
+[Pierwsze kroki](#pierwsze-kroki) · [Trudność i Horror](#poziom-trudności-i-horror) · [Sterowanie](#sterowanie) · [Multiplayer i rozmowy](#multiplayer-i-rozmowy) · [Uruchomienie lokalne](#uruchomienie-lokalne) · [Wdrożenie na Vercelu](docs/DEPLOYMENT.md)
 
 ## Co znajdziesz w grze
 
@@ -21,17 +21,40 @@ Wybierz **Tryb wieloosobowy**, wpisz nick i zaproś znajomych pod ten sam adres.
 | Animowane moby, pogoda i cykl dnia | Plecak, hotbar i skrzynie z osobnymi polami | PvP, tarcze, łuki i wytrzymałość |
 | Woda, pływanie i podwodny widok | Edytor skórek z dwiema warstwami i peleryną | Czat tekstowy oraz rozmowy przez mikrofon |
 
-Pięć stylów shaderów, ustawienia światła, zasięgu widzenia, dźwięków i muzyki pozwalają dopasować grę do sprzętu. Kamera ma widok z pierwszej osoby, zza pleców i z przodu. Edytor skórki jest domyślnie otwarty po prawej stronie menu: wybierz gotową skórkę albo narysuj własną, obracając model przy wciśniętym środkowym przycisku myszy.
+Pięć stylów shaderów oraz opcja **Wyłączone** (bez efektów postprocessingu i cieni), ustawienia światła, zasięgu widzenia, dźwięków i muzyki pozwalają dopasować grę do sprzętu. Kamera ma widok z pierwszej osoby, zza pleców i z przodu. Edytor skórki jest domyślnie otwarty po prawej stronie menu: wybierz gotową skórkę albo narysuj własną, obracając model przy wciśniętym środkowym przycisku myszy.
+
+Broń, podstawowe narzędzia, tarcza, łuk i bloki mają modele 3D widoczne przy nadgarstku także po naciśnięciu **F5**, u innych graczy oraz w podglądzie ekwipunku. Sprzęt podąża za animacją ręki. W pierwszej osobie ramię jest zakotwiczone poniżej kadru, a uderzenie prowadzi dłoń w przód i w dół. Domyślna skórka ma rękawy na górze ramion i odsłoniętą szyję; własnoręcznie edytowane skórki pozostają zachowane.
 
 ## Pierwsze kroki
 
-1. Wybierz **Nowy świat** i tryb przetrwania lub dołącz do świata wieloosobowego. Nowa postać zaczyna z pustym ekwipunkiem.
+1. Wybierz **Tryb i trudność**, a następnie tryb przetrwania lub dołącz do świata wieloosobowego. Nowa postać zaczyna z pustym ekwipunkiem.
 2. Przytrzymaj LPM na drewnie, zbierz surowiec i otwórz ekwipunek klawiszem **E**. Postępujące pęknięcia bloku pokazują pracę narzędzia.
 3. Zajrzyj do **Księgi receptur**. Przygotuj deski, a następnie stół rzemieślniczy z czterech desek. Własna siatka ma 2 × 2 pola; użycie postawionego stołu otwiera siatkę 3 × 3.
 4. Wytwórz narzędzia, przygotuj schronienie i skrzynię. Kilof przyspiesza kopanie kamienia, siekiera drewna, a łopata ziemi, piasku i żwiru.
 5. Otwórz **Atlas** klawiszem **J** i odkrywaj świat. Ruiny portali wymagają przygotowania, zanim zabiorą Cię do kolejnego wymiaru.
 
 **Kontynuuj zapisany świat** odtwarza wcześniejszy ekwipunek. Puste pola dotyczą nowej postaci i odrodzenia. W trybie kreatywnym przedmioty wybierasz z katalogu dostępnego w ekwipunku. Puste pole na pasku podręcznym oznacza pustą rękę.
+
+## Poziom trudności i Horror
+
+Wybierz trudność podczas tworzenia świata lub dołączania do multiplayer. W trakcie gry możesz ją zmienić w **Ustawienia → Świat**.
+
+| Poziom | Rozgrywka |
+|---|---|
+| **Łatwy** (`easy`) | Łagodniejsze obrażenia od otoczenia, wolniejszy głód i szybsza regeneracja |
+| **Średni** (`normal`) | Domyślne przetrwanie: zbieranie zapasów, budowanie i eksploracja |
+| **Trudny** (`hard`) | Mocniejsze zagrożenia, szybszy głód i wolniejszy powrót do zdrowia |
+| **Horror** (`horror`) | Wymagające przetrwanie z narastającą historią spotkań z Gościem |
+
+**Średni jest ustawieniem domyślnym**, także dla starych światów i profili bez zapisanego poziomu trudności. W multiplayer trudność dotyczy **Twojej postaci**. Nadal wszyscy gracie w jednym publicznym świecie; wybór poziomu nie tworzy oddzielnego serwera, a zasady PvP pozostają równe.
+
+### Gość — tylko dla chętnych
+
+Horror włączasz samodzielnie, wybierając ten poziom. Autorska postać **Gościa** buduje napięcie stopniowo: nie od razu zobaczysz wszystko, a po mocniejszych spotkaniach przychodzą spokojniejsze chwile. Historia rozwija się podczas rozgrywki, więc daj jej czas i obserwuj otoczenie. Model postaci i dźwięki powstają proceduralnie — gra nie wymaga instalacji dodatkowych modeli ani paczek audio.
+
+**Gracze na Łatwym, Średnim i Trudnym nie widzą Gościa ani nie słyszą jego dźwięków.** Osoby, które wybrały Horror, mogą przeżywać wspólne spotkania. Możecie jednocześnie budować i rozmawiać z graczami, którzy pozostali przy zwykłym przetrwaniu.
+
+W **Ustawienia → Dźwięk** są osobne opcje **Gość — dźwięki horroru** (`horrorVolume`) i **Nagłe straszenia w trybie Horror** (`horrorJumpscares`). Możesz zmniejszyć głośność lub wyłączyć nagłe straszenia, zachowując odległe spotkania i atmosferę. Przełączenie trudności z Horror na inny poziom wyłącza udział Twojej postaci w tych zdarzeniach.
 
 ## Sterowanie
 
@@ -56,7 +79,7 @@ Pięć stylów shaderów, ustawienia światła, zasięgu widzenia, dźwięków i
 
 Klawisze możesz zmienić w ustawieniach. **E, J, M i H ponownie zamykają swój panel**, jeśli nie wpisujesz tekstu w polu wyszukiwania. Po powrocie gra przejmuje kursor; gdy przeglądarka wymaga dodatkowego kliknięcia, użyj **Wróć do sterowania** albo kliknij w świat.
 
-### Ekwipunek, crafting i skrzynie
+### Ekwipunek, crafting, skrzynie i piec
 
 Plecak ma **27 pól**, hotbar **9**, a każda skrzynia **27**. Przedmioty można kłaść w dowolnych polach; skrzynia pokazuje liczbę wolnych miejsc.
 
@@ -66,9 +89,15 @@ Plecak ma **27 pól**, hotbar **9**, a każda skrzynia **27**. Przedmioty można
 | Kliknij stos, potem pole | Podnieś i odłóż; ten sposób również działa |
 | **Podwójny LPM** na przedmiocie | Zbierz pasujące przedmioty do stosu trzymanego kursorem |
 | **PPM** | Podnieś połowę stosu albo odłóż jedną sztukę |
+| Trzymany stos + przeciąganie **LPM / PPM** | Rozdziel równo / odłóż po jednej sztuce w odwiedzonych polach |
+| **Shift + wynik craftingu** | Wytwórz serię do limitu stosu i dostępnego miejsca |
 | **Shift + klik** | Szybko przenieś stos między obszarami ekwipunku lub między plecakiem a skrzynią |
 
 Dwuklik zbiera najwyżej **jeden pełny stos**: zwykle 64 sztuki, dla wybranych przedmiotów 16, a dla narzędzi i wyposażenia po 1. Nadmiar zostaje w polach. Upuszczenie przeciąganego stosu poza oknem nie wyrzuca przedmiotów. W multiplayer zmiany wspólnej skrzyni zatwierdza serwer, więc dwie osoby nie mogą zabrać tej samej zawartości.
+
+Piec ma osobne pola na surowiec, paliwo i wynik. **Shift + klik** wkłada surowiec lub paliwo do odpowiedniego pola; z pieca przenosi stos do plecaka. Płomień pokazuje zapas paliwa, strzałka postęp przetapiania. Węgiel wystarcza na osiem operacji; można też palić drewnem, deskami lub patykami. Piec pracuje po zamknięciu okna, gdy gracz pozostaje w pobliżu. Nie produkuje przedmiotów podczas nieobecności wszystkich graczy.
+
+[Zasady gestów i źródła badania zachowania Minecraft Java](docs/INVENTORY-RESEARCH.md).
 
 ### Granie na telefonie
 
@@ -123,7 +152,7 @@ npm test
 npm run build
 ```
 
-Testy obejmują m.in. ekwipunek i crafting, gesty przenoszenia, wodę, sterowanie, animacje, walkę, synchronizację skrzyń, ponowne łączenie oraz połączenia WebSocket dwóch klientów. Testy logiki nie zastępują ręcznej rozgrywki na konkretnym telefonie ani odsłuchu rozmowy z rzeczywistych mikrofonów.
+Testy obejmują m.in. ekwipunek i crafting, gesty przenoszenia, wodę, sterowanie, animacje, zakotwiczenie ręki i mocowanie sprzętu, bezpieczne uaktualnienie domyślnej skórki, poziomy trudności, filtrowanie wydarzeń Horror, walkę, synchronizację skrzyń, ponowne łączenie oraz połączenia WebSocket dwóch klientów. Testy logiki nie zastępują ręcznej rozgrywki na konkretnym telefonie ani odsłuchu rozmowy z rzeczywistych mikrofonów.
 
 | Katalog / plik | Zawartość |
 |---|---|

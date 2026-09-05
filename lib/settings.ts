@@ -51,13 +51,15 @@ export const ACTION_LABELS: Record<Action, string> = {
   slot8: "Pole 8",
   slot9: "Pole 9",
 };
-export type ShaderStyle = "classic" | "cinematic" | "vivid" | "retro" | "soft";
+export type ShaderStyle = "off" | "classic" | "cinematic" | "vivid" | "retro" | "soft";
 export type WeatherMode = "auto" | "clear" | "rain" | "storm" | "snow";
 export type GameSettings = {
   sensitivity: number;
   volume: number;
   music: number;
   weatherVolume: number;
+  horrorVolume: number;
+  horrorJumpscares: boolean;
   view: number;
   fov: number;
   shadows: boolean;
@@ -84,6 +86,8 @@ export const DEFAULT_SETTINGS: GameSettings = {
   volume: 0.5,
   music: 0.25,
   weatherVolume: 0.3,
+  horrorVolume: 0.65,
+  horrorJumpscares: true,
   view: 4,
   fov: 72,
   shadows: true,
@@ -106,6 +110,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   bindings: { ...DEFAULT_BINDINGS },
 };
 export const SHADERS: { id: ShaderStyle; name: string; description: string }[] = [
+  { id: "off", name: "Wyłączone", description: "Proste oświetlenie, bez filtrów i efektów ekranu." },
   {
     id: "classic",
     name: "Klasyczny",

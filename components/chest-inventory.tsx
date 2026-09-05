@@ -14,7 +14,7 @@ export default function ChestInventory({ game, snap }: { game: Game; snap: Snaps
     getStack: (slot) =>
       slot.area === "chest"
         ? (slots[slot.index] ?? null)
-        : (snap.pack[slot.area][slot.index] ?? null),
+        : slot.area === "slots" || slot.area === "grid" ? (snap.pack[slot.area][slot.index] ?? null) : null,
     dispatch: (action) => inventoryGesture(game, action, true),
   });
   const slot = (stack: Stack | null, index: number, area: "slots" | "chest") => (
@@ -64,6 +64,7 @@ export default function ChestInventory({ game, snap }: { game: Game; snap: Snaps
       </div>
       <p className="panel-footnote">
         Przeciągnij stos lub kliknij dwa pola. 2× LPM zbiera takie same przedmioty do jednego stosu.
+        Trzymany stos: przeciągnij LPM — podziel równo, PPM — po 1.
         PPM dzieli / odkłada 1. Shift + klik przenosi stos między skrzynią a plecakiem.
         <span className="inventory-touch-help">
           Na telefonie przytrzymaj chwilę stos i przeciągnij. Szybki ruch w pionie przewija panel.

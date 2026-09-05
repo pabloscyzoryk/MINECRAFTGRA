@@ -819,8 +819,10 @@ export default function SkinEditor() {
     </div>
   );
 }
-export function InventoryAvatar() {
+export function InventoryAvatar({ heldId = 0 }: { heldId?: number }) {
   const ref = useRef<HTMLDivElement>(null);
+  const held = useRef(heldId);
+  held.current = heldId;
   useEffect(() => {
     let stopped = false,
       renderer: THREE.WebGLRenderer,
@@ -860,6 +862,7 @@ export function InventoryAvatar() {
         avatar.head.rotation.x += (target.y - avatar.head.rotation.x) * 0.12;
         avatar.group.rotation.y = target.x * 0.25;
         avatar.pose(performance.now() / 1000);
+        avatar.setHeldItem(held.current);
         renderer.render(scene, camera);
       };
       frame();

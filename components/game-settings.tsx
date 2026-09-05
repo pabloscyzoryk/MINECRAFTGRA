@@ -12,6 +12,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import DifficultyPicker from '@/components/difficulty-picker';
+import type { Difficulty } from '@/lib/difficulty';
 import {
   SHADERS,
   DEFAULT_SETTINGS,
@@ -26,9 +28,15 @@ import {
 export default function GameSettingsPanel({
   value,
   onChange,
+  difficulty = 'normal',
+  onDifficultyChange,
+  online = false,
 }: {
   value: GameSettings;
   onChange: (s: Partial<GameSettings>) => void;
+  difficulty?: Difficulty;
+  onDifficultyChange?: (value: Difficulty) => void;
+  online?: boolean;
 }) {
   const [capture, setCapture] = useState<Action | null>(null),
     [message, setMessage] = useState('');
@@ -188,6 +196,7 @@ export default function GameSettingsPanel({
       </TabsContent>
       <TabsContent value="world">
         <div className="settings-scroll">
+          {onDifficultyChange && <DifficultyPicker value={difficulty} onChange={onDifficultyChange} online={online} />}
           <div className="section-label" id="weather-label">
             Pogoda
           </div>
@@ -250,6 +259,8 @@ export default function GameSettingsPanel({
       </TabsContent>
       <TabsContent value="audio">
         <div className="settings-scroll settings-content">
+          {range('horrorVolume', 'Gość — dźwięki horroru', 0, 1, 0.05, `${Math.round(value.horrorVolume * 100)}%`)}
+          {toggle('horrorJumpscares', 'Nagłe straszenia w trybie Horror', 'Wyłączenie pozostawia odległe spotkania, szepty i atmosferę. Poza trybem Horror żadne z tych zdarzeń nie występuje.')}
           {range(
             'volume',
             'Efekty gry',

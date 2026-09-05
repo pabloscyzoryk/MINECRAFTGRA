@@ -24,7 +24,8 @@ export default function SlotInventory({
   const p = snap.pack;
   const gestures = useSlotGestures({
     cursor: p.cursor,
-    getStack: (slot) => (slot.area === "chest" ? null : (p[slot.area][slot.index] ?? null)),
+    getStack: (slot) => slot.area === "result" ? snap.craftResult
+      : slot.area === "slots" || slot.area === "grid" ? p[slot.area][slot.index] ?? null : null,
     dispatch: (action) => inventoryGesture(game, action),
   });
   const slot = (area: Area, index: number) => {
@@ -87,7 +88,7 @@ export default function SlotInventory({
             </button>
             <small>{snap.adventure.armor ? "Założony" : "Brak"}</small>
           </div>
-          <InventoryAvatar />
+          <InventoryAvatar heldId={snap.hotbar[snap.selected] ?? 0} />
         </div>
         <div className="mc-crafting">
           <h3>
@@ -109,7 +110,8 @@ export default function SlotInventory({
                   ? "Wytwórz: " + item(snap.craftResult.id).name
                   : "Ułóż składniki według przepisu"
               }
-              onClick={(e) => game.takeCraft(e.shiftKey)}
+              aria-label={snap.craftResult ? "Wynik wytwarzania: " + item(snap.craftResult.id).name + " ×" + snap.craftResult.n : "Wynik wytwarzania: puste"}
+              {...gestures.slotProps({ area: "result", index: 0 })}
             >
               {snap.craftResult && (
                 <>
@@ -155,7 +157,7 @@ export default function SlotInventory({
       <div className="mc-footer">
         <p>
           Przeciągnij stos lub kliknij dwa pola · 2× LPM: zbierz takie same do stosu · PPM: podziel
-          / odłóż 1 · Shift + klik: szybkie przenoszenie
+          / odłóż 1 · Shift + klik: szybkie przenoszenie. Trzymany stos: przeciągnij LPM — podziel równo, PPM — po 1.
           <span className="inventory-touch-help">
             Na telefonie przytrzymaj chwilę stos i przeciągnij. Szybki ruch w pionie przewija panel.
           </span>
@@ -192,6 +194,7 @@ export default function SlotInventory({
                     </button>
                   ))
               : GRID_RECIPES.map((r, i) => ({ r, i }))
+                  .filter(({ r }) => !r.furnace)
                   .filter(({ r }) =>
                     item(r.out)
                       .name.toLocaleLowerCase("pl")

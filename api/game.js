@@ -174,15 +174,15 @@ var ITEMS = [
   }
 ];
 var RECIPES = [
-  ...[44, 51, 78, 86].flatMap((wood3) => [
-    { out: 112, n: 4, need: [[wood3, 2]] },
-    { out: 28, n: 1, need: [[wood3, 4]] },
-    { out: 61, n: 1, need: [[wood3, 8]] },
+  ...[44, 51, 78, 86].flatMap((wood4) => [
+    { out: 112, n: 4, need: [[wood4, 2]] },
+    { out: 28, n: 1, need: [[wood4, 4]] },
+    { out: 61, n: 1, need: [[wood4, 8]] },
     {
       out: 101,
       n: 1,
       need: [
-        [wood3, 3],
+        [wood4, 3],
         [112, 2]
       ]
     },
@@ -190,7 +190,7 @@ var RECIPES = [
       out: 62,
       n: 1,
       need: [
-        [wood3, 3],
+        [wood4, 3],
         [32, 3]
       ]
     }
@@ -680,6 +680,11 @@ var InventoryPack = class {
     if (index < 0 || index >= cells.length || area === "grid" && index >= this.size * this.size)
       return;
     const s = cells[index];
+    if (quick && area === "grid" && s) {
+      s.n = this.insert(s.id, s.n);
+      if (!s.n) cells[index] = null;
+      return;
+    }
     if (quick && area === "slots" && s) {
       const dest = index < 9 ? Array.from({ length: 27 }, (_, i) => i + 9) : Array.from({ length: 9 }, (_, i) => i);
       for (const i of dest) {
@@ -745,14 +750,13 @@ var InventoryPack = class {
     }
     return left;
   }
-  recipe(furnace = false) {
+  recipe(_furnace = false) {
     const occupied = this.grid.slice(0, this.size * this.size).map((s, i) => s ? i : -1).filter((i) => i >= 0);
     if (!occupied.length) return null;
     const x0 = Math.min(...occupied.map((i) => i % this.size)), x1 = Math.max(...occupied.map((i) => i % this.size)), y0 = Math.min(...occupied.map((i) => Math.floor(i / this.size))), y1 = Math.max(...occupied.map((i) => Math.floor(i / this.size)));
     for (const recipe of GRID_RECIPES) {
       const p = recipe.pattern;
-      if (p.length !== y1 - y0 + 1 || p[0].length !== x1 - x0 + 1 || recipe.furnace && !furnace)
-        continue;
+      if (p.length !== y1 - y0 + 1 || p[0].length !== x1 - x0 + 1 || recipe.furnace) continue;
       for (const mirror of [false, true]) {
         let valid = true;
         for (let y = 0; y < p.length; y++)
@@ -765,12 +769,18 @@ var InventoryPack = class {
     }
     return null;
   }
-  takeResult(furnace = false, quick = false) {
-    const r = this.recipe(furnace);
+  takeResult(_furnace = false, quick = false) {
+    const r = this.recipe();
     if (!r) return false;
     if (quick) {
-      if (this.capacity(r.out) < r.n) return false;
-      this.insert(r.out, r.n);
+      let crafted = 0;
+      while (this.recipe() === r && crafted + r.n <= maxStack(r.out) && this.capacity(r.out) >= r.n) {
+        this.insert(r.out, r.n);
+        for (let i = 0; i < this.size * this.size; i++)
+          if (this.grid[i] && --this.grid[i].n === 0) this.grid[i] = null;
+        crafted += r.n;
+      }
+      return crafted > 0;
     } else {
       if (this.cursor && (this.cursor.id !== r.out || this.cursor.n + r.n > maxStack(r.out)))
         return false;
@@ -782,7 +792,8 @@ var InventoryPack = class {
   }
   fillRecipe(index, creative = false) {
     const r = GRID_RECIPES[index];
-    if (!r || r.pattern.length > this.size || r.pattern[0].length > this.size) return false;
+    if (!r || r.furnace || r.pattern.length > this.size || r.pattern[0].length > this.size)
+      return false;
     const available = this.counts(), chosen = [];
     for (const row of r.pattern) {
       const line = [];
@@ -865,29 +876,179 @@ function clickStack(slot, cursor, right = false) {
   return { slot: a, cursor: b2 };
 }
 
+// lib/furnace.ts
+var FURNACE_RECIPES = [
+  { input: 21, output: 110, seconds: 10 },
+  { input: 80, output: 120, seconds: 10 },
+  { input: 4, output: 10, seconds: 10 },
+  { input: 9, output: 3, seconds: 10 }
+];
+var wood3 = /* @__PURE__ */ new Set([5, 8, 25, 43, 44, 47, 49, 51, 52, 76, 78, 86]);
+var knownItem = (id) => Number.isInteger(id) && id > 0 && (!!BLOCKS[id] || ITEMS.some((item) => item.id === id));
+function furnaceRecipe(id) {
+  return FURNACE_RECIPES.find((recipe) => recipe.input === id) ?? null;
+}
+function furnaceFuelSeconds(id) {
+  return id === 109 ? 80 : id === 112 ? 5 : wood3.has(id) ? 15 : 0;
+}
+function canInsertFurnaceSlot(index, id) {
+  return index === 0 ? knownItem(id) : index === 1 && furnaceFuelSeconds(id) > 0;
+}
+function createFurnace() {
+  return { slots: [null, null, null], burnRemaining: 0, burnTotal: 0, progress: 0, recipeId: null };
+}
+function restoreFurnace(value) {
+  const state = createFurnace(), data = value;
+  if (!data || typeof data !== "object") return state;
+  const finite = (n, max) => typeof n === "number" && Number.isFinite(n) ? Math.max(0, Math.min(max, n)) : 0;
+  for (let i = 0; i < 3; i++) {
+    const stack = data.slots?.[i];
+    if (stack && knownItem(stack.id) && Number.isFinite(stack.n) && stack.n >= 1)
+      state.slots[i] = { id: stack.id, n: Math.min(maxStack(stack.id), Math.floor(stack.n)) };
+  }
+  state.burnTotal = finite(data.burnTotal, 80);
+  state.burnRemaining = Math.min(state.burnTotal, finite(data.burnRemaining, 80));
+  const input = state.slots[0];
+  state.recipeId = input && furnaceRecipe(input.id) ? input.id : null;
+  state.progress = data.recipeId === state.recipeId && state.recipeId !== null ? finite(data.progress, 9.999999) : 0;
+  return state;
+}
+function tickFurnace(state, dt) {
+  let remaining = Number.isFinite(dt) ? Math.max(0, Math.min(30, dt)) : 0;
+  if (!remaining) return false;
+  const before = JSON.stringify(state);
+  for (let step = 0; remaining > 1e-6 && step < 64; step++) {
+    const input = state.slots[0], recipe = furnaceRecipe(input?.id ?? 0), output = state.slots[2];
+    if (state.recipeId !== (recipe?.input ?? null)) {
+      state.recipeId = recipe?.input ?? null;
+      state.progress = 0;
+    }
+    const canSmelt = !!(input && recipe && (!output || output.id === recipe.output && output.n < maxStack(output.id)));
+    if (state.burnRemaining <= 1e-6 && canSmelt) {
+      const fuel = state.slots[1], seconds = furnaceFuelSeconds(fuel?.id ?? 0);
+      if (fuel && seconds > 0) {
+        if (--fuel.n === 0) state.slots[1] = null;
+        state.burnRemaining = state.burnTotal = seconds;
+      }
+    }
+    if (state.burnRemaining <= 1e-6) {
+      state.burnRemaining = 0;
+      state.progress = Math.max(0, state.progress - remaining * 2);
+      break;
+    }
+    const elapsed = Math.min(
+      remaining,
+      state.burnRemaining,
+      canSmelt ? recipe.seconds - state.progress : Infinity
+    );
+    if (elapsed <= 0) break;
+    state.burnRemaining = Math.max(0, state.burnRemaining - elapsed);
+    remaining -= elapsed;
+    if (canSmelt) {
+      state.progress += elapsed;
+      if (state.progress >= recipe.seconds - 1e-6) {
+        state.slots[2] = { id: recipe.output, n: (output?.n ?? 0) + 1 };
+        if (--input.n === 0) state.slots[0] = null;
+        state.progress = 0;
+        state.recipeId = state.slots[0]?.id ?? null;
+      }
+    }
+  }
+  return JSON.stringify(state) !== before;
+}
+
 // lib/inventory-gestures.ts
+function validSlotRef(value) {
+  if (!value || typeof value !== "object") return false;
+  const v = value;
+  return ["slots", "grid", "chest", "furnace"].includes(v.area) && Number.isInteger(v.index) && v.index >= 0 && v.index < (v.area === "slots" ? 36 : v.area === "grid" ? 9 : v.area === "furnace" ? 3 : 27);
+}
+function expectedStack(value) {
+  if (value == null) return true;
+  const s = value;
+  return Number.isInteger(s.id) && s.id > 0 && s.id <= 130 && Number.isInteger(s.n) && s.n > 0 && s.n <= maxStack(s.id);
+}
 function validGesture(value) {
   if (!value || typeof value !== "object") return false;
   const g = value;
-  const ref = (v) => !!v && ["slots", "grid", "chest"].includes(v.area) && Number.isInteger(v.index) && v.index >= 0 && v.index < (v.area === "slots" ? 36 : v.area === "grid" ? 9 : 27);
   if (g.type === "collect") return Number.isInteger(g.id) && g.id > 0 && g.id <= 130;
+  if (g.type === "distribute")
+    return Array.isArray(g.slots) && g.slots.length > 0 && g.slots.length <= 75 && g.slots.every(validSlotRef) && (g.right === void 0 || typeof g.right === "boolean");
   if (g.type === "click")
-    return ref(g.slot) && (g.right === void 0 || typeof g.right === "boolean") && (g.quick === void 0 || typeof g.quick === "boolean");
-  return g.type === "move" && ref(g.from) && ref(g.to) && (g.expected == null || Number.isInteger(g.expected.id) && Number.isInteger(g.expected.n) && g.expected.n > 0);
+    return validSlotRef(g.slot) && (g.right === void 0 || typeof g.right === "boolean") && (g.quick === void 0 || typeof g.quick === "boolean");
+  return g.type === "move" && validSlotRef(g.from) && validSlotRef(g.to) && expectedStack(g.expected);
 }
-function applyInventoryGesture(pack, gesture, chest) {
+function planDistribution(cursor, refs, getStack, accepts = () => true, right = false) {
+  const original = cursor ? { ...cursor } : null;
+  if (!cursor || !expectedStack(cursor)) return { slots: [], cursor: original };
+  const accepted = [], seen = /* @__PURE__ */ new Set();
+  for (const slot of refs) {
+    if (!validSlotRef(slot) || accepted.length >= cursor.n) continue;
+    const key = slot.area + ":" + slot.index;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const current = getStack(slot);
+    if (current === void 0 || !accepts(slot, cursor.id) || slot.area === "furnace" && !canInsertFurnaceSlot(slot.index, cursor.id) || current && (current.id !== cursor.id || current.n >= maxStack(cursor.id)))
+      continue;
+    accepted.push({ slot: { ...slot }, current });
+  }
+  const share = right ? 1 : Math.floor(cursor.n / accepted.length);
+  let remaining = cursor.n;
+  const slots = accepted.map(({ slot, current }) => {
+    const added = Math.min(share, maxStack(cursor.id) - (current?.n ?? 0), remaining);
+    remaining -= added;
+    return { slot, stack: { id: cursor.id, n: (current?.n ?? 0) + added }, added };
+  });
+  return { slots, cursor: remaining ? { id: cursor.id, n: remaining } : null };
+}
+function inventoryAccess(pack, chest, furnace) {
+  const cells = (ref) => {
+    if (!validSlotRef(ref)) return void 0;
+    if (ref.area === "chest") return chest;
+    if (ref.area === "furnace") return furnace;
+    if (ref.area === "grid") return ref.index < pack.size * pack.size ? pack.grid : void 0;
+    return ref.area === "slots" ? pack.slots : void 0;
+  };
+  const accepts = (ref, id) => !!cells(ref) && (ref.area !== "furnace" || canInsertFurnaceSlot(ref.index, id));
+  return { cells, accepts };
+}
+function applyInventoryGesture(pack, gesture, chest, furnace) {
   if (!validGesture(gesture)) return false;
-  const cells = (ref) => ref.area === "chest" ? chest : ref.area === "grid" && ref.index >= pack.size * pack.size ? void 0 : pack[ref.area];
+  const { cells, accepts } = inventoryAccess(pack, chest, furnace);
   const click = (ref, right = false) => {
     const list2 = cells(ref);
+    if (pack.cursor && !accepts(ref, pack.cursor.id)) {
+      const source = list2[ref.index];
+      if (ref.area !== "furnace" || ref.index !== 2 || !source || source.id !== pack.cursor.id)
+        return false;
+      const n = Math.min(source.n, maxStack(source.id) - pack.cursor.n);
+      pack.cursor.n += n;
+      source.n -= n;
+      if (!source.n) list2[ref.index] = null;
+      return true;
+    }
     const result = clickStack(list2[ref.index], pack.cursor, right);
     list2[ref.index] = result.slot;
     pack.cursor = result.cursor;
+    return true;
   };
+  if (gesture.type === "distribute") {
+    if (!pack.cursor || gesture.slots.some((ref) => !cells(ref))) return false;
+    const plan = planDistribution(
+      pack.cursor,
+      gesture.slots,
+      (ref) => cells(ref)?.[ref.index],
+      accepts,
+      !!gesture.right
+    );
+    for (const change of plan.slots) cells(change.slot)[change.slot.index] = change.stack;
+    pack.cursor = plan.cursor;
+    return true;
+  }
   if (gesture.type === "collect") {
     if (pack.cursor && pack.cursor.id !== gesture.id) return false;
     let amount = pack.cursor?.n ?? 0;
-    const lists = [...chest ? [chest] : [], pack.slots, pack.grid];
+    const lists = [...chest ? [chest] : [], ...furnace ? [furnace] : [], pack.slots, pack.grid];
     for (const full of [false, true])
       for (const list2 of lists)
         for (let i = 0; i < list2.length; i++) {
@@ -909,39 +1070,64 @@ function applyInventoryGesture(pack, gesture, chest) {
     const source = from[gesture.from.index];
     if (Object.hasOwn(gesture, "expected") && (source?.id !== gesture.expected?.id || source?.n !== gesture.expected?.n))
       return false;
-    if (pack.cursor) {
-      click(gesture.to);
-      return true;
-    }
+    if (pack.cursor) return click(gesture.to);
     if (gesture.from.area === gesture.to.area && gesture.from.index === gesture.to.index)
       return true;
-    if (!source) return false;
-    click(gesture.from);
-    click(gesture.to);
-    if (pack.cursor) click(gesture.from);
+    if (!source || !accepts(gesture.to, source.id)) return false;
+    const target = to[gesture.to.index];
+    if (!target || target.id === source.id) {
+      const n = Math.min(source.n, maxStack(source.id) - (target?.n ?? 0));
+      if (n) to[gesture.to.index] = { id: source.id, n: (target?.n ?? 0) + n };
+      source.n -= n;
+      if (!source.n) from[gesture.from.index] = null;
+    } else {
+      if (!accepts(gesture.from, target.id)) return false;
+      from[gesture.from.index] = target;
+      to[gesture.to.index] = source;
+    }
     return true;
   }
   const list = cells(gesture.slot);
   if (!list) return false;
   const stack = list[gesture.slot.index];
-  if (gesture.quick && stack) {
-    if (chest && gesture.slot.area !== "grid") {
-      if (gesture.slot.area === "chest") {
-        stack.n = pack.insert(stack.id, stack.n);
-      } else {
-        for (const empty of [false, true])
-          for (let i = 0; i < chest.length && stack.n; i++) {
-            const target = chest[i];
-            if (empty ? !!target : target?.id !== stack.id) continue;
-            const n = Math.min(stack.n, maxStack(stack.id) - (target?.n ?? 0));
-            if (n) chest[i] = { id: stack.id, n: (target?.n ?? 0) + n };
-            stack.n -= n;
-          }
-      }
-      if (!stack.n) list[gesture.slot.index] = null;
-    } else
-      pack.click(gesture.slot.area, gesture.slot.index, !!gesture.right, true);
-  } else click(gesture.slot, !!gesture.right);
+  if (!gesture.quick || !stack) return click(gesture.slot, !!gesture.right);
+  if (gesture.slot.area === "grid" || gesture.slot.area === "chest" || gesture.slot.area === "furnace") {
+    stack.n = pack.insert(stack.id, stack.n);
+    if (!stack.n) list[gesture.slot.index] = null;
+    return true;
+  }
+  const destinations = chest ? chest.map((_, index) => ({ area: "chest", index })) : furnace && furnaceRecipe(stack.id) ? [{ area: "furnace", index: 0 }] : furnace && furnaceFuelSeconds(stack.id) > 0 ? [{ area: "furnace", index: 1 }] : Array.from({ length: gesture.slot.index < 9 ? 27 : 9 }, (_, i) => ({
+    area: "slots",
+    index: i + (gesture.slot.index < 9 ? 9 : 0)
+  }));
+  for (const empty of [false, true])
+    for (const dest of destinations) {
+      const targetList = cells(dest), target = targetList[dest.index];
+      if (!stack.n || !accepts(dest, stack.id) || (empty ? !!target : target?.id !== stack.id))
+        continue;
+      const n = Math.min(stack.n, maxStack(stack.id) - (target?.n ?? 0));
+      if (n) targetList[dest.index] = { id: stack.id, n: (target?.n ?? 0) + n };
+      stack.n -= n;
+    }
+  if (!stack.n) list[gesture.slot.index] = null;
+  return true;
+}
+function applyCraftResult(pack, options = {}, chest, furnace) {
+  if (options.quick !== void 0 && typeof options.quick !== "boolean" || !expectedStack(options.expected))
+    return false;
+  const recipe = pack.recipe();
+  if (!recipe || options.expected !== void 0 && (recipe.out !== options.expected?.id || recipe.n !== options.expected?.n))
+    return false;
+  if (!options.to) return pack.takeResult(false, !!options.quick);
+  if (pack.cursor || options.quick) return false;
+  const { cells, accepts } = inventoryAccess(pack, chest, furnace), targetList = cells(options.to);
+  if (!targetList || !accepts(options.to, recipe.out)) return false;
+  const target = targetList[options.to.index];
+  if (target && target.id !== recipe.out || maxStack(recipe.out) - (target?.n ?? 0) < recipe.n)
+    return false;
+  if (!pack.takeResult()) return false;
+  targetList[options.to.index] = { id: recipe.out, n: (target?.n ?? 0) + recipe.n };
+  pack.cursor = null;
   return true;
 }
 
@@ -2299,6 +2485,236 @@ function ignitePortal(w, x, y, z) {
   return false;
 }
 
+// lib/difficulty.ts
+var DIFFICULTIES = ["easy", "normal", "hard", "horror"];
+function normalizeDifficulty(value, fallback = "normal") {
+  return DIFFICULTIES.includes(value) ? value : fallback;
+}
+var RULES = {
+  easy: {
+    environmentDamage: 0.65,
+    hungerRate: 0.65,
+    regenerationSeconds: 4,
+    regenerationAmount: 1
+  },
+  normal: { environmentDamage: 1, hungerRate: 1, regenerationSeconds: 6, regenerationAmount: 1 },
+  hard: {
+    environmentDamage: 1.35,
+    hungerRate: 1.25,
+    regenerationSeconds: 9,
+    regenerationAmount: 1
+  },
+  horror: {
+    environmentDamage: 1.45,
+    hungerRate: 1.3,
+    regenerationSeconds: 10,
+    regenerationAmount: 1
+  }
+};
+function difficultyRules(value) {
+  return RULES[normalizeDifficulty(value)];
+}
+
+// lib/horror-director.ts
+var stages = [
+  "whisper",
+  "knock",
+  "watcher",
+  "silhouette",
+  "approach",
+  "jumpscare",
+  "recovery"
+];
+var minimum = [45, 80, 120, 180, 235, 300, 301];
+var distance = (a, b2) => Math.hypot(a[0] - b2[0], a[1] - b2[1], a[2] - b2[2]);
+var visual = (kind) => ["watcher", "silhouette", "approach"].includes(kind);
+var HorrorDirector = class {
+  constructor(seed = 24680) {
+    this.seed = seed;
+  }
+  seed;
+  elapsed = 0;
+  sequence = 0;
+  states = /* @__PURE__ */ new Map();
+  activeEvents = /* @__PURE__ */ new Map();
+  random(state) {
+    state.random = Math.imul(state.random, 1664525) + 1013904223 >>> 0;
+    return state.random / 4294967296;
+  }
+  progress(id) {
+    let s = this.states.get(id);
+    if (!s) {
+      let seed = this.seed;
+      for (const c of id) seed = Math.imul(seed ^ c.charCodeAt(0), 16777619);
+      s = { age: 0, stage: 0, tension: 0, nextAt: 0, cycle: 0, random: seed >>> 0 };
+      s.nextAt = 45 + this.random(s) * 30;
+      this.states.set(id, s);
+    }
+    return s;
+  }
+  reset(id) {
+    this.states.delete(id);
+    for (const [key, event] of this.activeEvents) {
+      event.viewerIds = event.viewerIds.filter((viewer) => viewer !== id);
+      if (!event.viewerIds.length) this.activeEvents.delete(key);
+    }
+  }
+  tick(dt, contexts) {
+    dt = Math.max(0, Math.min(1, Number.isFinite(dt) ? dt : 0));
+    this.elapsed += dt;
+    const events = [], eligible = contexts.filter(
+      (c) => normalizeDifficulty(c.difficulty) === "horror" && c.active && c.alive
+    ), byId = new Map(eligible.map((c) => [c.id, c]));
+    for (const [key, event] of this.activeEvents) {
+      const viewers = event.viewerIds.filter((id) => byId.get(id)?.dimension === event.dimension);
+      const looked = visual(event.kind) && this.elapsed - event.at > 0.2 && viewers.some((id) => {
+        const c = byId.get(id), dx = event.p[0] - c.p[0], dy = event.p[1] + 1.6 - (c.p[1] + 1.5), dz = event.p[2] - c.p[2];
+        const length = Math.hypot(dx, dy, dz);
+        return length > 0 && (-Math.sin(c.yaw) * Math.cos(c.pitch) * dx + Math.sin(c.pitch) * dy - Math.cos(c.yaw) * Math.cos(c.pitch) * dz) / length > 0.94;
+      });
+      if (!viewers.length || looked || this.elapsed - event.at >= event.duration) {
+        this.activeEvents.delete(key);
+        if (viewers.length && visual(event.kind))
+          events.push({
+            ...event,
+            id: "h" + ++this.sequence,
+            kind: "vanish",
+            targetId: key,
+            at: this.elapsed,
+            duration: 0.35,
+            reason: looked ? "looked" : "faded",
+            viewerIds: viewers
+          });
+      }
+    }
+    for (const c of eligible) {
+      const s = this.progress(c.id);
+      s.age += dt;
+      const alone = !contexts.some(
+        (q) => q.id !== c.id && q.active && q.alive && q.dimension === c.dimension && distance(q.p, c.p) < 24
+      ), risk = 1 + Number(c.night) * 0.35 + Number(c.underground) * 0.45 + Number(alone) * 0.3;
+      s.tension = Math.min(1, s.tension + dt * risk / 300);
+      if (s.age < s.nextAt) continue;
+      const kind = stages[s.stage], peers = visual(kind) ? eligible.filter(
+        (q) => q.dimension === c.dimension && distance(q.p, c.p) < 18 && this.progress(q.id).stage === s.stage && this.progress(q.id).age >= minimum[s.stage]
+      ) : [c], viewers = peers.length ? peers : [c], angle = c.yaw + (kind === "watcher" ? 0.75 : kind === "silhouette" ? 1.35 : Math.PI + 0.25), range = kind === "watcher" ? 20 + this.random(s) * 8 : kind === "silhouette" ? 9 : kind === "approach" ? 3.8 : kind === "jumpscare" ? 1.4 : 5, p = [c.p[0] - Math.sin(angle) * range, c.p[1], c.p[2] - Math.cos(angle) * range], event = {
+        id: "h" + ++this.sequence,
+        kind,
+        p,
+        at: this.elapsed,
+        duration: kind === "jumpscare" ? 1.1 : kind === "recovery" ? 8 : kind === "watcher" ? 9 : kind === "approach" ? 4 : 5,
+        intensity: kind === "jumpscare" ? 0.9 : Math.min(0.8, 0.15 + s.stage * 0.09 + s.tension * 0.18),
+        seed: Math.floor(this.random(s) * 2147483647),
+        reason: kind === "recovery" ? "recovery" : c.underground ? "underground" : c.night ? "night" : alone ? "alone" : "presence",
+        viewerIds: viewers.map((q) => q.id),
+        dimension: c.dimension,
+        yaw: Math.atan2(c.p[0] - p[0], c.p[2] - p[2])
+      };
+      events.push(event);
+      if (visual(kind)) this.activeEvents.set(event.id, event);
+      for (const q of viewers) {
+        const state = this.progress(q.id);
+        if (kind === "recovery") {
+          state.age = 0;
+          state.stage = 0;
+          state.tension = 0.1;
+          state.cycle++;
+          state.nextAt = 90 + this.random(state) * 30;
+        } else {
+          state.stage++;
+          const wait = kind === "jumpscare" ? 1.8 : (30 + this.random(state) * 25) / Math.min(1.3, risk);
+          state.nextAt = Math.max(minimum[state.stage], state.age + wait);
+          if (state.stage === 2 && state.cycle === 0) state.nextAt = Math.min(180, state.nextAt);
+        }
+      }
+    }
+    return events;
+  }
+  save() {
+    return {
+      version: 1,
+      elapsed: this.elapsed,
+      sequence: this.sequence,
+      states: [...this.states].map(([id, s]) => [id, { ...s }])
+    };
+  }
+  restore(value) {
+    this.states.clear();
+    this.activeEvents.clear();
+    this.elapsed = 0;
+    this.sequence = 0;
+    const data = value;
+    if (!data || data.version !== 1 || !Array.isArray(data.states)) return;
+    this.elapsed = Number.isFinite(data.elapsed) ? Math.max(0, Number(data.elapsed)) : 0;
+    this.sequence = Number.isSafeInteger(data.sequence) ? Math.max(0, Number(data.sequence)) : 0;
+    for (const entry of data.states) {
+      if (!Array.isArray(entry) || typeof entry[0] !== "string" || !entry[1]) continue;
+      const [id, s] = entry;
+      if (![s.age, s.stage, s.tension, s.nextAt, s.cycle, s.random].every(Number.isFinite))
+        continue;
+      if (!Number.isInteger(s.stage) || s.stage < 0 || s.stage > 6) continue;
+      const age = Math.max(0, s.age);
+      this.states.set(id, {
+        age,
+        stage: s.stage,
+        tension: Math.max(0, Math.min(1, s.tension)),
+        nextAt: Math.max(age + 30, s.nextAt),
+        cycle: Math.max(0, Math.floor(s.cycle)),
+        random: s.random >>> 0
+      });
+    }
+  }
+};
+
+// lib/horror-placement.ts
+function placeHorrorEvent(event, anchor, underground, world, ensure = () => {
+}) {
+  const free = (x, y, z) => {
+    if (y < 1 || y > 65 || !world.solid(x, y - 0.05, z)) return false;
+    for (let height = 0; height <= 4; height++)
+      for (const dx2 of [-0.8, 0, 0.8])
+        for (const dz2 of [-0.8, 0, 0.8])
+          if (world.solid(x + dx2, y + height, z + dz2) || [7, 15].includes(world.get(x + dx2, y + height, z + dz2)))
+            return false;
+    const dx = x - anchor[0], dy = y + 1.7 - (anchor[1] + 1.5), dz = z - anchor[2];
+    const distance2 = Math.hypot(dx, dy, dz);
+    for (let step = 0.15; step < distance2; step += 0.15) {
+      const fraction = step / distance2;
+      if (world.solid(
+        anchor[0] + dx * fraction,
+        anchor[1] + 1.5 + dy * fraction,
+        anchor[2] + dz * fraction
+      ))
+        return false;
+    }
+    return true;
+  };
+  for (const [dx, dz] of [
+    [0, 0],
+    [3, 0],
+    [-3, 0],
+    [0, 3],
+    [0, -3],
+    [5, 5],
+    [-5, -5]
+  ]) {
+    const x = Math.floor(event.p[0] + dx) + 0.5, z = Math.floor(event.p[2] + dz) + 0.5;
+    ensure(x, z);
+    const heights = underground ? [0, -1, 1, -2, 2].map((dy) => Math.floor(anchor[1]) + dy) : [world.surface(x, z)];
+    for (const y of heights)
+      if (Math.abs(y - anchor[1]) < 9 && free(x, y, z)) {
+        event.p = [x, y, z];
+        event.yaw = Math.atan2(anchor[0] - x, anchor[2] - z);
+        return true;
+      }
+  }
+  event.kind = "knock";
+  event.duration = 3;
+  event.intensity = Math.min(0.45, event.intensity);
+  event.reason = "obstructed";
+  return false;
+}
+
 // lib/net-protocol.ts
 var PROTOCOL = 1;
 var MAX_PLAYERS = 16;
@@ -2351,6 +2767,7 @@ var Room = class {
       world.onEdit = (x, y, z) => {
         wake(x, y, z);
         const key = dimension + ":" + [x, y, z];
+        if (world.get(x, y, z) !== 29 && this.furnaces[key]) this.removeFurnace(key);
         this.changes.set(key, [
           dimension,
           x,
@@ -2383,10 +2800,16 @@ var Room = class {
   storage = {};
   slots = {};
   chestRevisions = {};
+  furnaces = {};
+  furnaceRevisions = {};
+  furnaceViewers = /* @__PURE__ */ new Map();
+  dirtyFurnaces = /* @__PURE__ */ new Set();
   chat = [];
   drops = [];
+  pendingDrops = [];
   shots = [];
   dragon = new Dragon();
+  horror = new HorrorDirector(this.seed);
   region(d) {
     return this.regions.get(d);
   }
@@ -2420,6 +2843,10 @@ var Room = class {
       const chest = data.chest;
       response.chest = { ...chest, revision: this.chestRevisions[chest.key] ?? 0 };
     }
+    if (data.furnace) {
+      const furnace = data.furnace;
+      response.furnace = { ...furnace, revision: this.furnaceRevisions[furnace.key] ?? 0 };
+    }
     if (!data.ok && ["inventoryGesture", "settleInventory"].includes(c.type))
       response.pack = p.profile.pack;
     const snapshot = structuredClone(response);
@@ -2428,7 +2855,7 @@ var Room = class {
     if (keys.length > 100) delete p.responses[keys[0]];
     this.send(p.id, snapshot);
   }
-  join(id, nick, skin) {
+  join(id, nick, skin, difficulty) {
     if (!validNick(nick))
       return this.send(id, {
         type: "error",
@@ -2463,7 +2890,12 @@ var Room = class {
         swing: false,
         held: 0,
         seen: this.now(),
-        profile: {},
+        profile: { difficulty: normalizeDifficulty(difficulty), food: 20 },
+        difficulty: normalizeDifficulty(difficulty),
+        active: false,
+        sprinting: false,
+        hungerClock: 0,
+        pvpUntil: 0,
         lastAction: 0,
         health: 20,
         hurtUntil: 0,
@@ -2482,6 +2914,14 @@ var Room = class {
     p.nick = nick;
     p.skin = skin;
     p.seen = this.now();
+    const selectedDifficulty = normalizeDifficulty(
+      difficulty,
+      normalizeDifficulty(p.profile.difficulty)
+    );
+    if (selectedDifficulty !== p.difficulty) this.horror.reset(id);
+    p.difficulty = selectedDifficulty;
+    p.profile.difficulty = selectedDifficulty;
+    p.active = false;
     this.send(id, {
       type: "welcome",
       id,
@@ -2494,7 +2934,8 @@ var Room = class {
       water: this.water(),
       crystals: this.crystals,
       won: this.won,
-      dragon: this.dragon.hp
+      dragon: this.dragon.hp,
+      horrorClock: this.horror.elapsed
     });
     this.send(id, { type: "history", messages: this.chat });
   }
@@ -2512,7 +2953,8 @@ var Room = class {
       swingProgress: p.swingProgress,
       held: p.held,
       seen: p.seen,
-      health: p.health
+      health: p.health,
+      difficulty: p.difficulty
     };
   }
   input(id, m) {
@@ -2524,6 +2966,13 @@ var Room = class {
       p.yaw = Number.isFinite(m.yaw) ? Number(m.yaw) : 0;
       p.pitch = Math.max(-1.54, Math.min(1.54, Number(m.pitch) || 0));
       p.moving = !!m.moving;
+      if (p.active && m.active !== true && p.difficulty === "horror")
+        this.send(id, { type: "horrorReset" });
+      p.active = m.active === true;
+      if (m.furnaceKey === null) this.furnaceViewers.delete(id);
+      else if (typeof m.furnaceKey === "string" && this.furnaces[m.furnaceKey] && this.furnaceInReach(p, m.furnaceKey))
+        this.furnaceViewers.set(id, m.furnaceKey);
+      p.sprinting = m.sprinting === true;
       p.crouch = !!m.crouch;
       p.swing = !!m.swing;
       p.swingProgress = p.swing ? Math.max(0, Math.min(1, Number(m.swingProgress) || 0)) : -1;
@@ -2551,12 +3000,15 @@ var Room = class {
         pack = candidate.snapshot();
     }
     const health = p.health;
+    const food = Number.isFinite(p.profile.food) ? Number(p.profile.food) : 20;
     p.profile = {
       ...m,
       inventory,
       pack,
       inventoryRevision: revision,
-      lastMine: p.profile.lastMine
+      lastMine: p.profile.lastMine,
+      difficulty: p.difficulty,
+      food
     };
     if (typeof m.health === "number" && Number.isFinite(m.health) && m.health < health)
       this.damage(p, health - Math.max(0, m.health));
@@ -2572,6 +3024,15 @@ var Room = class {
       return;
     }
     const reject = (message) => this.reply(p, c, { ok: false, message });
+    if (c.type === "difficulty") {
+      if (!DIFFICULTIES.includes(c.difficulty))
+        return reject("Nieprawid\u0142owa trudno\u015B\u0107.");
+      p.difficulty = normalizeDifficulty(c.difficulty);
+      p.profile.difficulty = p.difficulty;
+      this.horror.reset(id);
+      this.send(id, { type: "horrorReset" });
+      return this.reply(p, c, { ok: true, difficulty: p.difficulty });
+    }
     if (c.type === "respawn") {
       if (p.health > 0) return reject("Posta\u0107 jeszcze \u017Cyje.");
       p.health = 20;
@@ -2579,13 +3040,18 @@ var Room = class {
       p.spawnUntil = this.now() + 8e3;
       p.hurtUntil = this.now() + 3e3;
       p.profile = { ...p.profile, inventory: {}, pack: void 0 };
+      p.profile.food = 20;
+      p.hungerClock = 0;
+      this.horror.reset(id);
+      this.send(id, { type: "horrorReset" });
       return this.reply(p, c, { ok: true, health: 20 });
     }
     if (c.type === "heal") {
-      if (this.now() - p.healed < 6e3 || Number(p.profile.food) < 14)
+      const rules = difficultyRules(p.pvpUntil > this.now() ? "normal" : p.difficulty);
+      if (this.now() - p.healed < rules.regenerationSeconds * 1e3 || Number(p.profile.food) < 14)
         return reject("Regeneracja wymaga jedzenia.");
       p.healed = this.now();
-      p.health = Math.min(20, p.health + 1);
+      p.health = Math.min(20, p.health + rules.regenerationAmount);
       return this.reply(p, c, { ok: true, health: p.health });
     }
     if (p.health <= 0) return reject("Najpierw odrod\u017A posta\u0107.");
@@ -2606,8 +3072,9 @@ var Room = class {
         return this.reply(p, c, { ok: true });
       }
       if (!validGesture(c.gesture)) return reject("Nieprawid\u0142owy gest ekwipunku.");
-      let slots, key2 = "";
-      if (c.chestKey !== null) {
+      let slots, key2 = "", furnace, furnaceKey = "";
+      if (c.chestKey != null && c.furnaceKey != null) return reject("Wybierz jeden pojemnik.");
+      if (c.chestKey != null) {
         if (typeof c.chestKey !== "string" || !c.chestKey.startsWith(p.dimension + ":"))
           return reject("Skrzynia jest w innym wymiarze.");
         const [x2, y2, z2] = c.chestKey.slice(p.dimension.length + 1).split(",").map(Number);
@@ -2619,7 +3086,14 @@ var Room = class {
         if (!this.slots[key2]) return reject("Najpierw otw\xF3rz skrzyni\u0119.");
         slots = this.slots[key2].map((s) => s ? { ...s } : null);
       }
-      if (!applyInventoryGesture(pack, c.gesture, slots))
+      if (c.furnaceKey != null) {
+        if (typeof c.furnaceKey !== "string" || !this.furnaceInReach(p, c.furnaceKey))
+          return reject("Piec jest poza zasi\u0119giem lub zosta\u0142 zniszczony.");
+        furnaceKey = c.furnaceKey;
+        if (!this.furnaces[furnaceKey]) return reject("Najpierw otw\xF3rz piec.");
+        furnace = structuredClone(this.furnaces[furnaceKey]);
+      }
+      if (!applyInventoryGesture(pack, c.gesture, slots, furnace?.slots))
         return reject("Stos lub pole si\u0119 zmieni\u0142y. Spr\xF3buj ponownie.");
       p.profile.pack = pack.snapshot();
       p.profile.inventory = pack.counts();
@@ -2629,7 +3103,20 @@ var Room = class {
         const revision = this.chestRevisions[key2] = (this.chestRevisions[key2] ?? 0) + 1;
         this.send("*", { type: "chestUpdate", key: key2, slots: structuredClone(slots), revision });
       }
-      return this.reply(p, c, { ok: true, ...slots ? { chest: { key: key2, slots } } : {} });
+      if (furnace) {
+        if (furnace.recipeId !== (furnaceRecipe(furnace.slots[0]?.id ?? 0)?.input ?? null)) {
+          furnace.progress = 0;
+          furnace.recipeId = furnaceRecipe(furnace.slots[0]?.id ?? 0)?.input ?? null;
+        }
+        this.furnaces[furnaceKey] = furnace;
+        this.furnaceRevisions[furnaceKey] = (this.furnaceRevisions[furnaceKey] ?? 0) + 1;
+        this.broadcastFurnace(furnaceKey);
+      }
+      return this.reply(p, c, {
+        ok: true,
+        ...slots ? { chest: { key: key2, slots } } : {},
+        ...furnace ? { furnace: { key: furnaceKey, state: furnace } } : {}
+      });
     }
     const w = this.ensure(p.dimension, p.p[0], p.p[2]);
     if (c.type === "craft") {
@@ -2642,9 +3129,10 @@ var Room = class {
               if (w.get(p.p[0] + x2, p.p[1] + y2, p.p[2] + z2) === id2) return true;
         return false;
       };
-      if (pack.size === 3 && !near(28) && !near(29) && !near(30))
+      if (pack.size === 3 && !near(28) && !near(30))
         return reject("Wytwarzanie 3 \xD7 3 wymaga sto\u0142u.");
-      if (!pack.takeResult(near(29), !!c.quick)) return reject("Brak sk\u0142adnik\xF3w lub miejsca.");
+      if (!applyCraftResult(pack, { quick: !!c.quick, to: c.to, expected: c.expected }))
+        return reject("Brak sk\u0142adnik\xF3w lub miejsca.");
       p.profile.pack = pack.snapshot();
       p.profile.inventory = pack.counts();
       return this.reply(p, c, { ok: true });
@@ -2670,6 +3158,7 @@ var Room = class {
       if (!n) return reject("Brak miejsca.");
       d.n -= n;
       this.drops = this.drops.filter((d2) => d2.n > 0);
+      this.drainPendingDrops();
       return this.reply(p, c, { ok: true, grant: [[d.id, n]] });
     }
     if (c.type === "drop") {
@@ -2719,7 +3208,8 @@ var Room = class {
       damage *= target.armor === 122 ? 0.55 : target.armor === 121 ? 0.75 : 1;
       const knock = delta.normalize().multiplyScalar(stats.knockback);
       knock.y = 2.8;
-      this.damage(target, Math.max(1, Math.round(damage)), array(knock));
+      p.pvpUntil = target.pvpUntil = this.now() + 2e4;
+      this.damage(target, Math.max(1, Math.round(damage)), array(knock), "pvp");
       return this.reply(p, c, { ok: true, message: critical ? "Trafienie krytyczne!" : void 0 });
     }
     if (c.type === "hit") {
@@ -2763,6 +3253,12 @@ var Room = class {
       return reject("Blok jest poza zasi\u0119giem.");
     this.ensure(p.dimension, x, z);
     const block = w.get(x, y, z), key = p.dimension + ":" + [x, y, z];
+    if (c.type === "openFurnace") {
+      if (block !== 29) return reject("Nie ma tutaj pieca.");
+      const state = this.furnaces[key] ??= createFurnace();
+      this.furnaceViewers.set(id, key);
+      return this.reply(p, c, { ok: true, furnace: { key, state } });
+    }
     if (c.type === "chest" || c.type === "chestClick") {
       if (block !== 61) return reject("Nie ma tutaj skrzyni.");
       if (!this.storage[key]) {
@@ -2912,7 +3408,11 @@ var Room = class {
     return Number.isInteger(id) && id > 0 && (!!BLOCKS[id] || ITEMS.some((i) => i.id === id));
   }
   drop(dimension, id, n, p, v = [0, 2, 0]) {
-    if (this.drops.length >= 300) return;
+    if (!this.validItem(id) || !Number.isSafeInteger(n) || n <= 0) return;
+    if (this.drops.length >= 300) {
+      this.queuePendingDrop({ dimension, id, n, p: [...p], v: [...v] });
+      return;
+    }
     this.drops.push({
       key: "d" + ++this.sequence,
       dimension,
@@ -2924,9 +3424,37 @@ var Room = class {
       grace: 1
     });
   }
-  damage(p, n, knockback = [0, 0, 0]) {
+  queuePendingDrop(drop) {
+    const same = this.pendingDrops.filter((d) => d.dimension === drop.dimension && d.id === drop.id);
+    let target = same.find((d) => d.p.every((value, axis) => Math.floor(value / 16) === Math.floor(drop.p[axis] / 16)));
+    if (!target && this.pendingDrops.length >= 512 && same.length)
+      target = same.reduce((nearest, d) => vec(d.p).distanceToSquared(vec(drop.p)) < vec(nearest.p).distanceToSquared(vec(drop.p)) ? d : nearest);
+    if (target) {
+      target.n += drop.n;
+      return;
+    }
+    if (this.pendingDrops.length >= 512) {
+      const groups = /* @__PURE__ */ new Map();
+      for (const pending of this.pendingDrops) {
+        const key = pending.dimension + ":" + pending.id, group = groups.get(key);
+        if (group) group.n += pending.n;
+        else groups.set(key, pending);
+      }
+      this.pendingDrops = [...groups.values()];
+    }
+    this.pendingDrops.push(drop);
+  }
+  drainPendingDrops() {
+    while (this.drops.length < 300 && this.pendingDrops.length) {
+      const next = this.pendingDrops.shift();
+      this.drop(next.dimension, next.id, next.n, next.p, next.v);
+    }
+  }
+  damage(p, n, knockback = [0, 0, 0], source = "environment") {
     if (p.health <= 0 || p.hurtUntil > this.now()) return;
+    if (source !== "pvp") n = Math.max(0.1, n * difficultyRules(p.difficulty).environmentDamage);
     p.health = Math.max(0, p.health - n);
+    p.healed = this.now();
     p.hurtUntil = this.now() + 800;
     if (p.health === 0) {
       const inventory = p.profile.inventory ?? {};
@@ -2938,6 +3466,8 @@ var Room = class {
             p.p[2]
           ]);
       p.profile = { ...p.profile, inventory: {}, pack: void 0 };
+      this.horror.reset(p.id);
+      this.send(p.id, { type: "horrorReset" });
       this.message("Serwer", p.nick + " poleg\u0142. Przedmioty czekaj\u0105 w miejscu \u015Bmierci.", true);
     }
     if (p.health === 0)
@@ -2954,9 +3484,9 @@ var Room = class {
     return p.dimension === "overworld" && Math.hypot(p.p[0] - 8, p.p[2] - 22) < 12;
   }
   lineClear(w, a, b2) {
-    const delta = b2.clone().sub(a), distance = delta.length();
+    const delta = b2.clone().sub(a), distance2 = delta.length();
     delta.normalize();
-    for (let t = 0.25; t < distance - 0.3; t += 0.25) {
+    for (let t = 0.25; t < distance2 - 0.3; t += 0.25) {
       const p = a.clone().addScaledVector(delta, t);
       if (w.solid(p.x, p.y, p.z)) return false;
     }
@@ -3031,10 +3561,131 @@ var Room = class {
       r.mobs.set("m" + ++this.sequence, m);
     }
   }
+  tickHorror(dt, players) {
+    const contexts = players.map((p) => {
+      const world = this.region(p.dimension).world;
+      return {
+        id: p.id,
+        p: p.p,
+        yaw: p.yaw,
+        pitch: p.pitch,
+        dimension: p.dimension,
+        difficulty: normalizeDifficulty(p.difficulty),
+        active: p.active,
+        alive: p.health > 0,
+        night: p.dimension !== "overworld" || this.clock % 600 > 350,
+        underground: world.surface(p.p[0], p.p[2]) > p.p[1] + 5
+      };
+    });
+    for (const event of this.horror.tick(dt, contexts)) {
+      const viewers = event.viewerIds.filter((id) => {
+        const p = this.players.get(id);
+        return p?.active && p.health > 0 && p.difficulty === "horror" && p.dimension === event.dimension;
+      });
+      if (!viewers.length) continue;
+      event.viewerIds = viewers;
+      if (["watcher", "silhouette", "approach"].includes(event.kind)) {
+        const anchor = this.players.get(viewers[0]), underground = contexts.find((c) => c.id === anchor.id).underground;
+        this.placeHorrorEvent(event, anchor.p, underground);
+      }
+      for (const id of viewers) this.send(id, { type: "horror", event: structuredClone(event) });
+    }
+  }
+  furnaceInReach(p, key) {
+    if (!key.startsWith(p.dimension + ":")) return false;
+    const coords = key.slice(p.dimension.length + 1).split(",").map(Number);
+    if (coords.length !== 3 || !coords.every(Number.isInteger)) return false;
+    const [x, y, z] = coords;
+    if (key !== p.dimension + ":" + [x, y, z] || y < 1 || y > 70 || Math.hypot(p.p[0] - x, p.p[1] + 1 - y, p.p[2] - z) > 8)
+      return false;
+    return this.ensure(p.dimension, x, z, 0).get(x, y, z) === 29;
+  }
+  broadcastFurnace(key) {
+    const state = this.furnaces[key] ?? null, revision = this.furnaceRevisions[key] ?? 0;
+    for (const [id, selected] of this.furnaceViewers) {
+      if (selected !== key) continue;
+      const p = this.players.get(id);
+      if (!p || this.now() - p.seen > 12e3 || state && !this.furnaceInReach(p, key)) {
+        this.furnaceViewers.delete(id);
+        continue;
+      }
+      this.send(id, {
+        type: "furnaceUpdate",
+        key,
+        state: state ? structuredClone(state) : null,
+        revision
+      });
+      if (!state) this.furnaceViewers.delete(id);
+    }
+  }
+  removeFurnace(key) {
+    const state = this.furnaces[key];
+    if (!state) return;
+    const [dimension, position] = key.split(":"), [x, y, z] = position.split(",").map(Number);
+    delete this.furnaces[key];
+    this.furnaceRevisions[key] = (this.furnaceRevisions[key] ?? 0) + 1;
+    this.dirtyFurnaces.delete(key);
+    for (const stack of state.slots)
+      if (stack) this.drop(dimension, stack.id, stack.n, [x + 0.5, y + 0.6, z + 0.5]);
+    this.broadcastFurnace(key);
+  }
+  tickFurnaces(dt, players) {
+    for (const [key, state] of Object.entries(this.furnaces)) {
+      const [dimension, position] = key.split(":"), [x, y, z] = position.split(",").map(Number);
+      if (!players.some((p) => p.dimension === dimension && Math.hypot(p.p[0] - x, p.p[2] - z) <= 96))
+        continue;
+      if (this.ensure(dimension, x, z, 0).get(x, y, z) !== 29) {
+        this.removeFurnace(key);
+        continue;
+      }
+      if (tickFurnace(state, dt)) {
+        this.furnaceRevisions[key] = (this.furnaceRevisions[key] ?? 0) + 1;
+        this.dirtyFurnaces.add(key);
+      }
+    }
+    if (this.tickId % 4 === 0) {
+      for (const key of this.dirtyFurnaces) this.broadcastFurnace(key);
+      this.dirtyFurnaces.clear();
+    }
+  }
+  placeHorrorEvent(event, anchor, underground) {
+    placeHorrorEvent(
+      event,
+      anchor,
+      underground,
+      this.region(event.dimension).world,
+      (x, z) => {
+        this.ensure(event.dimension, x, z, 0);
+      }
+    );
+  }
   tick(dt) {
     this.clock += dt;
     this.tickId++;
     const active = [...this.players.values()].filter((p) => this.now() - p.seen < 12e3);
+    this.tickFurnaces(dt, active);
+    this.tickHorror(dt, active);
+    for (const p of active) {
+      if (!p.active || p.health <= 0) continue;
+      const rules = difficultyRules(p.pvpUntil > this.now() ? "normal" : p.difficulty);
+      p.hungerClock = (p.hungerClock || 0) + dt * (p.moving ? p.sprinting ? 1.8 : 1 : 0.25) * rules.hungerRate;
+      if (p.hungerClock >= 25) {
+        p.hungerClock -= 25;
+        p.profile.food = Math.max(0, Number(p.profile.food ?? 20) - 1);
+        if (p.profile.food === 0) this.damage(p, 1);
+      }
+      if (Number(p.profile.food ?? 20) > 14 && p.health < 20 && this.now() - p.healed >= rules.regenerationSeconds * 1e3) {
+        p.healed = this.now();
+        p.health = Math.min(20, p.health + rules.regenerationAmount);
+      }
+      if (this.tickId % 20 === 0)
+        this.send(p.id, {
+          type: "vitals",
+          food: p.profile.food ?? 20,
+          health: p.health,
+          difficulty: p.difficulty
+        });
+    }
     for (const p of active) {
       p.stamina = Math.min(100, p.stamina + dt * (p.blocking ? 5 : 18));
       this.populate(p);
@@ -3122,7 +3773,8 @@ var Room = class {
         if (p) {
           for (const target of active)
             if (target.id !== p.id && target.dimension === s.dimension && target.health > 0 && !this.safe(target) && !this.safe(p) && this.now() > target.spawnUntil && this.now() > p.spawnUntil && vec(target.p).add(new THREE2.Vector3(0, 1, 0)).distanceTo(s.p) < 0.8) {
-              this.damage(target, 7, array(s.v.clone().normalize().multiplyScalar(3)));
+              p.pvpUntil = target.pvpUntil = this.now() + 2e4;
+              this.damage(target, 7, array(s.v.clone().normalize().multiplyScalar(3)), "pvp");
               s.life = 0;
               break;
             }
@@ -3164,6 +3816,7 @@ var Room = class {
       d.v[2] *= Math.exp(-dt * 2);
     }
     this.drops = this.drops.filter((d) => d.life > 0 && d.n > 0 && d.p[1] > -30);
+    this.drainPendingDrops();
   }
   enemyShot(d, pos, p) {
     this.shots.push({
@@ -3216,6 +3869,7 @@ var Room = class {
       type: "frame",
       tick: this.tickId,
       clock: this.clock,
+      horrorClock: this.horror.elapsed,
       players: [...this.players.values()].filter((p) => this.now() - p.seen < 12e3).map((p) => this.publicPlayer(p)),
       mobs,
       drops: this.drops,
@@ -3247,9 +3901,13 @@ var Room = class {
       storage: this.storage,
       slots: this.slots,
       chestRevisions: this.chestRevisions,
+      furnaces: this.furnaces,
+      furnaceRevisions: this.furnaceRevisions,
+      horror: this.horror.save(),
       chat: this.chat,
       drops: this.drops,
       players: [...this.players.values()],
+      pendingDrops: this.pendingDrops,
       regions: [...this.regions].map(([d, r]) => ({
         d,
         mobs: [...r.mobs].map(([id, m]) => this.mobWire(id, m)),
@@ -3276,10 +3934,42 @@ var Room = class {
     this.storage = s.storage;
     this.slots = s.slots ?? {};
     this.chestRevisions = s.chestRevisions ?? {};
+    this.furnaces = Object.fromEntries(
+      Object.entries(s.furnaces ?? {}).filter(([key]) => /^(overworld|nether|end):-?\d+,-?\d+,-?\d+$/.test(key)).map(([key, state]) => [key, restoreFurnace(state)])
+    );
+    this.furnaceRevisions = s.furnaceRevisions ?? {};
+    this.furnaceViewers.clear();
+    this.dirtyFurnaces.clear();
+    this.horror.restore(s.horror);
     this.chat = s.chat ?? [];
     this.drops = s.drops;
+    this.pendingDrops = [];
+    for (const d of s.pendingDrops ?? [])
+      if (DIMENSIONS_NET.includes(d.dimension) && this.validItem(d.id) && Number.isSafeInteger(d.n) && d.n > 0 && validVec(d.p) && validVec(d.v))
+        this.queuePendingDrop({ dimension: d.dimension, id: d.id, n: d.n, p: [...d.p], v: [...d.v] });
     Object.assign(this.dragon, s.dragon);
-    this.players = new Map(s.players.map((p) => [p.id, { ...p, seen: 0 }]));
+    this.players = new Map(
+      s.players.map((p) => {
+        const difficulty = normalizeDifficulty(p.profile?.difficulty);
+        return [
+          p.id,
+          {
+            ...p,
+            seen: 0,
+            active: false,
+            sprinting: false,
+            difficulty,
+            hungerClock: Number(p.hungerClock) || 0,
+            pvpUntil: 0,
+            profile: {
+              ...p.profile,
+              difficulty,
+              food: Number.isFinite(p.profile?.food) ? p.profile.food : 20
+            }
+          }
+        ];
+      })
+    );
     for (const rr of s.regions) {
       const r = this.region(rr.d);
       r.world.edits = Object.fromEntries(
@@ -3536,7 +4226,7 @@ var Gateway = class {
     if (!room) return;
     const { id, data } = packet;
     if (packet.type === "join") {
-      room.join(id, data.nick, data.skin);
+      room.join(id, data.nick, data.skin, data.difficulty);
       const p = room.players.get(id);
       if (p) {
         this.broadcast({
@@ -3633,7 +4323,11 @@ var Gateway = class {
         peer.joined = true;
         clearTimeout(timeout);
         this.broadcast({ type: "connection", id, connection: peer.connection });
-        this.forward({ type: "join", id, data: { nick: m.nick, skin: m.skin } });
+        this.forward({
+          type: "join",
+          id,
+          data: { nick: m.nick, skin: m.skin, difficulty: m.difficulty }
+        });
         return;
       }
       if (!peer.joined) return;

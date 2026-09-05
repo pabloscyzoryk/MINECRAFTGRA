@@ -147,7 +147,9 @@ export class Atmosphere {
     view.renderScene = () => this.render();
   }
   configure(settings: GameSettings) {
+    this.lastShader = settings.shader;
     const ids: Record<ShaderStyle, number> = {
+      off: 0,
       classic: 0,
       cinematic: 1,
       vivid: 2,
@@ -169,6 +171,10 @@ export class Atmosphere {
   }
   render() {
     if (this.disposed) return;
+    if (this.lastShader === "off") {
+      this.view.renderer.render(this.view.scene, this.view.camera);
+      return;
+    }
     const size = this.view.renderer.getSize(new THREE.Vector2());
     if (this.lastW !== size.x || this.lastH !== size.y) {
       this.composer.setSize(size.x, size.y);

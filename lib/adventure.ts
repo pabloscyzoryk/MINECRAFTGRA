@@ -2,7 +2,9 @@ import type { Game } from "./engine";
 import { BIOMES, findBiome } from "./biomes";
 import { hash } from "./world";
 import { fromCounts, chestCounts, type ChestSlots } from "./chest-slots";
+import { createFurnace, restoreFurnace, tickFurnace, type FurnaceState } from "./furnace";
 export type AdventureData = {
+  furnaces: Record<string, FurnaceState>;
   chestSlots: Record<string, ChestSlots>;
   discovered: string[];
   opened: number;
@@ -15,6 +17,7 @@ export type AdventureData = {
   waypoint: { x: number; z: number; name: string } | null;
 };
 export const newAdventure = (): AdventureData => ({
+  furnaces: {},
   chestSlots: {},
   discovered: [],
   opened: 0,
@@ -29,12 +32,15 @@ export const newAdventure = (): AdventureData => ({
 export class Adventure {
   data: AdventureData = newAdventure();
   currentChest = "";
+  currentFurnace = "";
+  furnaceUiTime = 0;
   timer = 0;
   growthTimer = 0;
   constructor(public game: Game) {}
   reset() {
     this.data = newAdventure();
     this.currentChest = "";
+    this.currentFurnace = "";
   }
   key(x: number, y: number, z: number) {
     return this.game.world.dimension + ":" + x + "," + y + "," + z;
@@ -122,6 +128,8 @@ export class Adventure {
       quests: this.quests(),
       chest: { ...d.storage[this.currentChest] },
       chestSlots: this.chestSlots().map((s) => (s ? { ...s } : null)),
+      furnace: this.currentFurnace && d.furnaces[this.currentFurnace]
+        ? structuredClone(d.furnaces[this.currentFurnace]) : null,
       waypoint: w
         ? {
             ...w,
@@ -183,6 +191,45 @@ export class Adventure {
       this.data.storage[this.currentChest] ?? {},
     ));
   }
+  furnaceState() {
+    return this.currentFurnace ? this.data.furnaces[this.currentFurnace] : undefined;
+  }
+  openFurnace(x: number, y: number, z: number) {
+    if (this.game.net) return this.game.net.openFurnace(x, y, z);
+    this.currentFurnace = this.key(x, y, z);
+    this.data.furnaces[this.currentFurnace] ??= createFurnace();
+    this.game.audio.play("place");
+    this.game.pause("furnace");
+  }
+  tickFurnaces(dt: number) {
+    const g = this.game;
+    for (const [key, state] of Object.entries(this.data.furnaces)) {
+      if (!key.startsWith(g.world.dimension + ":")) continue;
+      const [x, y, z] = key.split(":")[1].split(",").map(Number);
+      if (Math.hypot(x - g.position.x, z - g.position.z) > 96) continue;
+      if (g.world.get(x, y, z) !== 29) {
+        this.furnaceBlockChanged(x, y, z);
+        continue;
+      }
+      tickFurnace(state, dt);
+    }
+    this.furnaceUiTime += dt;
+    if (g.pauseReason === "furnace" && this.furnaceUiTime >= .1) {
+      this.furnaceUiTime = 0;
+      g.emit();
+    }
+  }
+  furnaceBlockChanged(x: number, y: number, z: number) {
+    const g = this.game, key = this.key(x, y, z), state = this.data.furnaces[key];
+    if (g.net || !state || g.world.get(x, y, z) === 29) return;
+    delete this.data.furnaces[key];
+    for (const stack of state.slots) if (stack)
+      g.drops.spawn(stack.id, stack.n, g.position.clone().set(x + .5, y + .5, z + .5));
+    if (this.currentFurnace === key) {
+      this.currentFurnace = "";
+      if (g.pauseReason === "furnace") g.resume();
+    }
+  }
   setChestSlots(slots: ChestSlots) {
     this.data.chestSlots[this.currentChest] = slots;
     this.data.storage[this.currentChest] = chestCounts(slots);
@@ -238,6 +285,10 @@ export class Adventure {
   mineSpecial(id: number, x: number, y: number, z: number) {
     const g = this.game,
       key = this.key(x, y, z);
+    if (id === 29 && this.data.furnaces[key]) {
+      for (const stack of this.data.furnaces[key].slots) if (stack) g.add(stack.id, stack.n);
+      delete this.data.furnaces[key];
+    }
     if ([64, 65, 66].includes(id)) {
       delete this.data.crops[key];
       g.add(116, id === 66 ? 3 : 1);
@@ -355,5 +406,9 @@ export class Adventure {
       : [];
     this.data.storage = value.storage && typeof value.storage === "object" ? value.storage : {};
     this.data.crops = value.crops && typeof value.crops === "object" ? value.crops : {};
+    this.data.furnaces = {};
+    for (const [key, state] of Object.entries(value.furnaces ?? {}))
+      if (/^(overworld|nether|end):-?\d+,\d+,-?\d+$/.test(key))
+        this.data.furnaces[key] = restoreFurnace(state);
   }
 }

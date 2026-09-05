@@ -269,7 +269,7 @@ export class Gateway {
     if (!room) return;
     const { id, data } = packet;
     if (packet.type === "join") {
-      room.join(id, data.nick, data.skin);
+      room.join(id, data.nick, data.skin, data.difficulty);
       const p = room.players.get(id);
       if (p) {
         this.broadcast({
@@ -378,7 +378,11 @@ export class Gateway {
         peer.joined = true;
         clearTimeout(timeout);
         this.broadcast({ type: "connection", id, connection: peer.connection });
-        this.forward({ type: "join", id, data: { nick: m.nick, skin: m.skin } });
+        this.forward({
+          type: "join",
+          id,
+          data: { nick: m.nick, skin: m.skin, difficulty: m.difficulty },
+        });
         return;
       }
       if (!peer.joined) return;

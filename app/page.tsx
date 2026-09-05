@@ -42,8 +42,11 @@ import SkinEditor from "@/components/skin-editor";
 import GameSettingsPanel from "@/components/game-settings";
 import { Journal } from "@/components/adventure-panels";
 import ChestPanel from "@/components/chest-inventory";
+import FurnaceInventory from "@/components/furnace-inventory";
 import TouchControls from "@/components/touch-controls";
 import { DEFAULT_SETTINGS, keyName } from "@/lib/settings";
+import DifficultyPicker, { DIFFICULTY_NAMES } from "@/components/difficulty-picker";
+import type { Difficulty } from "@/lib/difficulty";
 function MiniMap({ game, snap }: { game: Game | null; snap: Snapshot }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -93,6 +96,7 @@ const title: Record<string, string> = {
   chat: "Czat wspólnego świata",
   journal: "Tam, gdzie jeszcze Cię nie było.",
   chest: "Małe i wielkie znaleziska",
+  furnace: "Przy ogniu pieca",
   pause: "Chwila oddechu",
   inventory: "Ekwipunek",
   crafting: "Stół rzemieślniczy",
@@ -114,6 +118,7 @@ export default function Home() {
     [error, setError] = useState(""),
     [panel, setPanel] = useState(""),
     [mode, setMode] = useState<Mode>("survival"),
+    [difficulty, setDifficulty] = useState<Difficulty>("normal"),
     [settings, setSettings] = useState(defaults),
     [seed, setSeed] = useState("24680"),
     [confirmNew, setConfirmNew] = useState(false);
@@ -141,7 +146,7 @@ export default function Home() {
   }, []);
   const start = (resume = false) => {
     setPanel("");
-    runtime?.start(mode, resume, Number(seed) || 24680);
+    runtime?.start(mode, resume, Number(seed) || 24680, difficulty);
   };
   const open = (p: string) => {
     if (snap?.started) runtime?.pause(p);
@@ -172,6 +177,7 @@ export default function Home() {
   return (
     <main className={"game-root " + (!snap?.started && menuSkin ? "with-skin-panel" : "")}>
       <div ref={mount} className="world-canvas" />
+      {snap?.active && snap.difficulty === "horror" && <div className="horror-vignette" aria-hidden="true" style={{ opacity: snap.horrorOverlay }} />}
       {!snap?.started && (
         <>
           <div className="cinema-shade" />
@@ -223,14 +229,10 @@ export default function Home() {
             </button>
             <div className="menu-row">
               <button
-                onClick={() =>
-                  snap?.saved
-                    ? open("world")
-                    : setMode(mode === "survival" ? "creative" : "survival")
-                }
+                onClick={() => open("world")}
               >
                 {mode === "survival" ? <Mountain size={18} /> : <Sparkles size={18} />}{" "}
-                {snap?.saved ? "Nowy świat" : mode === "survival" ? "Przetrwanie" : "Kreatywny"}
+                {snap?.saved ? "Nowy świat" : "Tryb i trudność"}
               </button>
               <button onClick={() => open("settings")}>
                 <Settings2 size={18} />
@@ -257,7 +259,7 @@ export default function Home() {
                 <small>
                   {snap?.saved
                     ? "Zapis lokalny · Gotowy do kontynuacji"
-                    : `Nowy świat · Ziarno ${seed}`}
+                    : `Nowy świat · ${DIFFICULTY_NAMES[difficulty]} · Ziarno ${seed}`}
                 </small>
               </div>
             </div>
@@ -535,7 +537,7 @@ export default function Home() {
       >
         <DialogContent
           finalFocus={false}
-          className={`game-dialog ${panel === "journal" ? "journal-dialog" : panel === "chest" ? "chest-dialog" : panel === "inventory" || panel === "crafting" ? "inventory-dialog" : panel === "dimensions" ? "dimensions-dialog" : panel === "skin" ? "skin-dialog" : panel === "settings" ? "settings-dialog" : ""}`}
+          className={`game-dialog ${panel === "journal" ? "journal-dialog" : panel === "chest" || panel === "furnace" ? "chest-dialog" : panel === "inventory" || panel === "crafting" ? "inventory-dialog" : panel === "dimensions" ? "dimensions-dialog" : panel === "skin" ? "skin-dialog" : panel === "settings" ? "settings-dialog" : ""}`}
           showCloseButton={false}
         >
           <div className="panel-heading">
@@ -665,6 +667,7 @@ export default function Home() {
                   <small>Wszystkie bloki. Pełna swoboda.</small>
                 </button>
               </div>
+              <DifficultyPicker value={difficulty} onChange={setDifficulty} />
               <button className="primary-action" onClick={newWorld}>
                 <Play size={17} />
                 Stwórz nowy świat
@@ -678,7 +681,10 @@ export default function Home() {
           )}
           {panel === "journal" && snap && runtime && <Journal game={runtime} snap={snap} />}
           {panel === "chest" && snap && runtime && <ChestPanel game={runtime} snap={snap} />}
-          {panel === "settings" && <GameSettingsPanel value={settings} onChange={changeSettings} />}
+          {panel === "furnace" && snap && runtime && <FurnaceInventory game={runtime} snap={snap} />}
+          {panel === "settings" && <GameSettingsPanel value={settings} onChange={changeSettings}
+            difficulty={snap?.difficulty ?? difficulty} online={!!runtime?.net}
+            onDifficultyChange={(value) => { setDifficulty(value); runtime?.setDifficulty(value); }} />}
           {panel === "skin" && <SkinEditor />}
           {panel === "multiplayer" && runtime && (
             <MultiplayerMenu game={runtime} onJoined={() => setPanel("")} />

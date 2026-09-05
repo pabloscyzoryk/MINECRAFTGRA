@@ -12,6 +12,14 @@ Zapis świata i większe komunikaty przesyłane przez Redis są kompresowane, ab
 
 WebSockety są dostępne na Vercelu w wersji beta na wszystkich planach i wymagają Fluid Compute. Połączenie kończy się po osiągnięciu maksymalnego czasu funkcji; klient gry ma mechanizm ponownego łączenia. Szczegóły opisuje [dokumentacja WebSocketów Vercela](https://vercel.com/docs/functions/websockets).
 
+### Trudność i Horror w jednym świecie
+
+Poziomy **Łatwy (`easy`), Średni (`normal`), Trudny (`hard`) i Horror (`horror`)** są wybierane dla postaci. W multiplayer nie wymagają osobnych instancji świata ani różnych wartości `WORLD_NAMESPACE`. Średni jest domyślny; starsze zapisy i profile bez ustawionej trudności również otrzymują `normal`. W grze zmienia się ją przez **Ustawienia → Świat**.
+
+Horror jest dobrowolny. Serwer kieruje wydarzenia Gościa do graczy, którzy wybrali ten poziom; mogą oni uczestniczyć we wspólnych spotkaniach. Pozostali gracze nie widzą Gościa ani nie słyszą jego dźwięków, choć nadal przebywają w tym samym świecie. Historia narasta w trakcie gry i zawiera spokojniejsze przerwy. Zasady walki PvP pozostają wspólne niezależnie od wybranej trudności.
+
+Nie trzeba pobierać dodatkowych zasobów ani ustawiać nowych sekretów: model Gościa, jego efekty dźwiękowe oraz modele trzymanego sprzętu są tworzone przez kod gry i trafiają do zwykłego buildu. Ustawienia dźwięku klienta udostępniają `horrorVolume` oraz `horrorJumpscares`; są oddzielne od wyboru trudności. Wyłączenie nagłych straszeń zachowuje pozostałą atmosferę Horror.
+
 ## 1. Zaimportuj repozytorium
 
 1. Dodaj całe repozytorium do projektu Vercel. Katalog główny musi zawierać `package.json`, `vercel.json`, `api/` i `public/`.
@@ -55,6 +63,10 @@ Sprawdź po kolei:
 3. Dwóch graczy w różnych przeglądarkach dołącza do tego samego świata i widzi swoje nicki.
 4. Blok postawiony przez jedną osobę widzi druga, a zmiana wspólnej skrzyni jest synchronizowana.
 5. Działa czat; po ręcznym włączeniu mikrofonów i udzieleniu zgód można sprawdzić rozmowę.
+
+Przy sprawdzaniu nowej wersji wybierz na jednej postaci **Średni**, a na drugiej dobrowolnie **Horror**. Obie powinny pozostać w jednym świecie, a efekty Gościa mają trafiać wyłącznie do postaci Horror. Nie oceniaj działania po samych pierwszych sekundach — spotkania pojawiają się stopniowo. Osobno sprawdź zmianę trudności w trakcie gry i przełącznik nagłych straszeń.
+
+Modele sprzętu sprawdzisz po wybraniu przedmiotu na hotbarze: powinien być widoczny w kamerze F5, podglądzie ekwipunku i u drugiego gracza, podążając za nadgarstkiem. Animacja pierwszoosobowa korzysta z ramienia zakotwiczonego poniżej kadru.
 
 Mikrofon wymaga HTTPS albo localhost. Ustawienie „zawsze włączony” nie omija zgody przeglądarki. Opóźnienie i jakość głosu zależą od sieci oraz zasobów usług.
 
@@ -103,6 +115,8 @@ Do testowania aktualizacji Preview używaj innego namespace lub osobnej bazy. Pr
 | Drugi gracz dostaje inny świat | Ten sam adres wdrożenia, ta sama baza i `WORLD_NAMESPACE` |
 | Utracony profil po powrocie | Ta sama przeglądarka i jej dane strony; nick sam nie przywraca anonimowego klucza |
 | Brak mikrofonu lub dźwięku | HTTPS, zgody witryny, włączony mikrofon, tryb nadawania, głośność i aktywna karta |
+| Znajomy widzi Gościa, a ja nie | To oczekiwane, jeśli tylko znajomy wybrał Horror; trudność jest ustawiana dla każdej postaci |
+| Brak nagłych straszeń w Horror | Opcja `horrorJumpscares`, aktywna rozgrywka i stopniowy rozwój spotkań; dźwięki mają osobne `horrorVolume` |
 | Powolne działanie lub zerwane sesje | Metryki pamięci, transferu i operacji Redis; limity Vercela; jakość połączenia |
 
 Lokalnie uruchom `npm ci`, `npm run build`, `npm start`. Serwer nasłuchuje na `127.0.0.1:3000` i bez Redis używa pliku `.local-world.json`. Parametr `PORT` pozwala zmienić port. Ten lokalny serwer nasłuchuje wyłącznie na komputerze, na którym jest uruchomiony.

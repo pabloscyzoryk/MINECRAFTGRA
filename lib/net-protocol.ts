@@ -1,5 +1,10 @@
 import type { Dimension } from "./blocks";
 import type { MobKind } from "./entities";
+import type { Difficulty } from "./difficulty";
+import type { FurnaceState } from "./furnace";
+export type FurnaceWire = { key: string; state: FurnaceState | null; revision: number };
+export type { Difficulty } from "./difficulty";
+export type { HorrorEvent } from "./horror-director";
 export const PROTOCOL = 1;
 export const SERVER_NAME = "Wspólny świat";
 export const MAX_PLAYERS = 16;
@@ -21,6 +26,7 @@ export type PlayerWire = {
   skin?: SkinWire;
   seen: number;
   health?: number;
+  difficulty?: Difficulty;
 };
 export type MobWire = {
   id: string;
@@ -73,6 +79,7 @@ export type FrameWire = {
   crystals: number[];
   won: boolean;
   changes: BlockWire[];
+  horrorClock?: number;
 };
 export type Command = { type: string; req: string; [key: string]: unknown };
 export function validNick(n: unknown): n is string {

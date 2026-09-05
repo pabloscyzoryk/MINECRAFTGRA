@@ -292,6 +292,11 @@ export class InventoryPack {
     if (index < 0 || index >= cells.length || (area === "grid" && index >= this.size * this.size))
       return;
     const s = cells[index];
+    if (quick && area === "grid" && s) {
+      s.n = this.insert(s.id, s.n);
+      if (!s.n) cells[index] = null;
+      return;
+    }
     if (quick && area === "slots" && s) {
       const dest =
         index < 9
@@ -360,7 +365,7 @@ export class InventoryPack {
     }
     return left;
   }
-  recipe(furnace = false) {
+  recipe(_furnace = false) {
     const occupied = this.grid
       .slice(0, this.size * this.size)
       .map((s, i) => (s ? i : -1))
@@ -372,8 +377,7 @@ export class InventoryPack {
       y1 = Math.max(...occupied.map((i) => Math.floor(i / this.size)));
     for (const recipe of GRID_RECIPES) {
       const p = recipe.pattern;
-      if (p.length !== y1 - y0 + 1 || p[0].length !== x1 - x0 + 1 || (recipe.furnace && !furnace))
-        continue;
+      if (p.length !== y1 - y0 + 1 || p[0].length !== x1 - x0 + 1 || recipe.furnace) continue;
       for (const mirror of [false, true]) {
         let valid = true;
         for (let y = 0; y < p.length; y++)
@@ -387,12 +391,22 @@ export class InventoryPack {
     }
     return null;
   }
-  takeResult(furnace = false, quick = false) {
-    const r = this.recipe(furnace);
+  takeResult(_furnace = false, quick = false) {
+    const r = this.recipe();
     if (!r) return false;
     if (quick) {
-      if (this.capacity(r.out) < r.n) return false;
-      this.insert(r.out, r.n);
+      let crafted = 0;
+      while (
+        this.recipe() === r &&
+        crafted + r.n <= maxStack(r.out) &&
+        this.capacity(r.out) >= r.n
+      ) {
+        this.insert(r.out, r.n);
+        for (let i = 0; i < this.size * this.size; i++)
+          if (this.grid[i] && --this.grid[i]!.n === 0) this.grid[i] = null;
+        crafted += r.n;
+      }
+      return crafted > 0;
     } else {
       if (this.cursor && (this.cursor.id !== r.out || this.cursor.n + r.n > maxStack(r.out)))
         return false;
@@ -404,7 +418,8 @@ export class InventoryPack {
   }
   fillRecipe(index: number, creative = false) {
     const r = GRID_RECIPES[index];
-    if (!r || r.pattern.length > this.size || r.pattern[0].length > this.size) return false;
+    if (!r || r.furnace || r.pattern.length > this.size || r.pattern[0].length > this.size)
+      return false;
     const available = this.counts(),
       chosen: number[][] = [];
     for (const row of r.pattern) {

@@ -15,6 +15,8 @@ import type { Game } from "@/lib/engine";
 import { Multiplayer } from "@/lib/multiplayer";
 import { MAX_PLAYERS, validNick } from "@/lib/net-protocol";
 import { keyName } from "@/lib/settings";
+import DifficultyPicker from "@/components/difficulty-picker";
+import { normalizeDifficulty, type Difficulty } from "@/lib/difficulty";
 function useNetwork(net: Multiplayer | null) {
   const [, set] = useState(0);
   useEffect(() => net?.subscribe(() => set((v) => v + 1)), [net]);
@@ -28,6 +30,7 @@ export default function MultiplayerMenu({ game, onJoined }: { game: Game; onJoin
       }
     }),
     [net, setNet] = useState<Multiplayer | null>(game.net),
+    [difficulty, setDifficulty] = useState<Difficulty>(normalizeDifficulty(game.difficulty)),
     [error, setError] = useState("");
   useNetwork(net);
   useEffect(() => {
@@ -40,7 +43,7 @@ export default function MultiplayerMenu({ game, onJoined }: { game: Game; onJoin
     }
     setError("");
     net?.close();
-    const next = new Multiplayer(game, nick.trim());
+    const next = new Multiplayer(game, nick.trim(), difficulty);
     game.net = next;
     setNet(next);
     void next.voice.playback();
@@ -72,6 +75,7 @@ export default function MultiplayerMenu({ game, onJoined }: { game: Game; onJoin
           }}
         />
       </label>
+      <DifficultyPicker value={difficulty} onChange={setDifficulty} online />
       <p className="panel-footnote">
         Dołączacie do tego samego świata pod tym samym adresem strony. Nowa postać zaczyna z pustym
         ekwipunkiem. Środek doliny jest strefą bezpieczną; poza nią działa PvP.
