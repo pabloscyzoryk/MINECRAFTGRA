@@ -234,17 +234,13 @@
   pointer-events: none;
   text-shadow: 0 1px 4px #000;
 }
-.combat-hud span {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-}
 .combat-hud > div {
   height: 4px;
   background: #07190daf;
   width: 145px;
   margin: 5px auto;
+  overflow: hidden;
+  border-radius: 2px;
 }
 .combat-hud i {
   display: block;

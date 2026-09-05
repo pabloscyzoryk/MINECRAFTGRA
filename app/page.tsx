@@ -546,13 +546,10 @@ export default function Home() {
                 onExit={() => runtime.endRest()}
               />
             )}
-            {snap.toast && (
-              <output className="game-toast">
-                <Sparkles size={16} />
-                {snap.toast}
-              </output>
-            )}
-            <div className="held-name">
+            <div
+              className="held-name"
+              key={`held-${snap.selected}-${snap.hotbar[snap.selected] ?? 0}`}
+            >
               {snap.hotbar[snap.selected] ? item(snap.hotbar[snap.selected]).name : "Pusta ręka"}
               {[105, 113].includes(snap.hotbar[snap.selected]) && snap.mode === "survival"
                 ? ` · ${snap.inventory[113] ?? 0} strzał`

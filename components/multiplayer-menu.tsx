@@ -237,6 +237,7 @@ export function NetworkHUD({ game, open }: { game: Game; open: (p: string) => vo
   const net = game.net!;
   useNetwork(net);
   const voice = net.voice;
+  const stamina = Number.isFinite(net.stamina) ? Math.max(0, Math.min(100, net.stamina)) : 100;
   if (!net.initialized) return null;
   return (
     <>
@@ -269,11 +270,20 @@ export function NetworkHUD({ game, open }: { game: Game; open: (p: string) => vo
           </span>
         </button>
       )}
-      <div className="combat-hud">
-        <div title="Wytrzymałość">
-          <i style={{ width: net.stamina + "%" }} />
+      {net.connected && game.health > 0 && stamina < 100 && (
+        <div
+          className="combat-hud"
+          role="progressbar"
+          aria-label="Wytrzymałość"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(stamina)}
+        >
+          <div title="Wytrzymałość">
+            <i style={{ width: stamina + "%" }} />
+          </div>
         </div>
-      </div>
+      )}
       {!net.connected && (
         <div className="connection-banner" role="status">
           {net.status} Działania wrócą po połączeniu.

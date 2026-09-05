@@ -49,6 +49,8 @@ Menu startowe zachowuje podgląd świata i edytor postaci. Przewiń niżej, aby 
 
 Podczas gry HUD pozostawia więcej miejsca na świat. Pasek graczy, czatu, mikrofonu i kamerki znajduje się u góry po lewej. Informacje o świecie, cel przygody, nazwa wskazywanego bloku i przypomnienie sterowania są dostępne pod **Esc → Świat / Dziennik / Sterowanie**. Usunięcie napisu „PvP aktywne” nie zmienia zasad walki między graczami.
 
+Banery z poradami nie pojawiają się podczas gry. Nazwa wybranego przedmiotu lub pustej ręki rozmywa się i znika po trzech sekundach; wybór innego pola albo zmiana trzymanego przedmiotu pokazuje ją ponownie. Przy ograniczeniu animacji w systemie nazwa znika bez rozmycia. Pasek wytrzymałości pokazuje się tylko podczas jej ubytku i całkowicie znika po odzyskaniu 100%.
+
 ### Schody, półbloki, łóżka i zamki
 
 **Schody dębowe i kamienne** obracają się zgodnie z kierunkiem patrzenia. Kliknięcie górnej połowy bocznej powierzchni albo spodu bloku stawia odwrócone schody lub górny półblok. Dwie połówki tego samego materiału łączą się w pełny blok; po wydobyciu odzyskasz dwa półbloki. Po stopniach wchodzi się płynnie bez skakania, a obrys, pęknięcia i trafienia kursorem odpowiadają ich kształtowi. W księdze receptur znajdziesz oba materiały: trzy deski lub kamienie w rzędzie dają sześć półbloków, a sześć w układzie schodków — cztery schody.
