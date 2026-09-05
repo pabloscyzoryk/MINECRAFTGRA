@@ -49,7 +49,11 @@ export type MobWire = {
   walkBlend: number;
   heading: number;
   attackClock: number;
+  rangedAttack?: boolean;
   hurt: number;
+  anger?: number;
+  eyeContact?: number;
+  angerTarget?: string;
   fuse: number;
   deathTime: number;
   timer: number;

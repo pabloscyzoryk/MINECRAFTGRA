@@ -14,6 +14,7 @@ import {
   type DropData,
 } from "./interaction-effects";
 import { PointerMotion } from "./pointer-motion";
+import { BlockParticles } from "./block-particles";
 import { requestRawPointerLock } from "./pointer-capture";
 import { clearDamagePath, fallDamage, moveVertical } from "./player-physics";
 import { damageCauseLabel, type DamageCause } from "./damage-causes";
@@ -40,6 +41,8 @@ import { HorrorPresentation } from "./horror-presentation";
 import { placeHorrorEvent } from "./horror-placement";
 import { HorrorHunt, type HuntWire } from "./horror-hunt";
 import { createHuntEnvironment } from "./horror-terrain";
+const NO_MOVEMENT_KEYS: ReadonlySet<string> = new Set();
+const PHYSICAL_PANELS = new Set(["inventory", "crafting", "chest", "furnace", "chat"]);
 export type { GameSettings } from "./settings";
 export type Snapshot = {
   needsCapture: boolean;
@@ -233,6 +236,7 @@ export class Game extends WorldRenderer {
   crystals: Crystal[] = [];
   projectiles: Projectile[] = [];
   particles: Particle[] = [];
+  blockParticles = new BlockParticles(this.scene, 192);
   audio = new AudioFX();
   outline: THREE.LineSegments;
   hand = new THREE.Group();
@@ -241,6 +245,7 @@ export class Game extends WorldRenderer {
   onMenu: (panel: string) => void;
   iconAtlas: string = "";
   heldId = -1;
+  private lastPillarHint = -Infinity;
   viewArm: FirstPersonArm | null = null;
   constructor(
     mount: HTMLElement,
@@ -902,6 +907,7 @@ export class Game extends WorldRenderer {
     this.emit();
   }
   clearDynamic() {
+    this.blockParticles?.clear();
     this.horror?.clear();
     for (const m of this.mobs) {
       this.scene.remove(m.group);
@@ -1423,6 +1429,12 @@ export class Game extends WorldRenderer {
     }
     let duration = miningDuration(t.id, held);
     if (this.mode === "creative") duration = 0.13;
+    if (this.settings.particles)
+      this.blockParticles?.chip(
+        t.id,
+        { x: t.x + 0.5, y: t.y + 0.5, z: t.z + 0.5 },
+        { x: t.px - t.x, y: t.py - t.y, z: t.pz - t.z },
+      );
     this.mining = duration === 0 ? 1 : this.mining + dt / duration;
     if (this.mining >= 1) {
       if (this.net) {
@@ -1444,7 +1456,8 @@ export class Game extends WorldRenderer {
       }
       this.mined++;
       if (this.mode === "survival" && harvest) this.xp += t.id === 22 ? 8 : 1;
-      this.burst(new THREE.Vector3(t.x + 0.5, t.y + 0.5, t.z + 0.5), BLOCKS[t.id].color, 10);
+      if (this.settings.particles)
+        this.blockParticles?.break(t.id, { x: t.x + 0.5, y: t.y + 0.5, z: t.z + 0.5 });
       this.audio.play("break");
       this.mining = 0;
       this.emit();
@@ -1475,19 +1488,23 @@ export class Game extends WorldRenderer {
           if (this.world.solid(x, y, z)) return true;
     return false;
   }
-  move(dt: number) {
+  move(dt: number, controlsEnabled = true) {
     if (this.horrorCaught()) {
       this.velocity.set(0, 0, 0);
       return;
     }
     const p = this.position,
       w = this.world,
-      k = this.keys;
+      k = controlsEnabled ? this.keys : NO_MOVEMENT_KEYS;
     this.crouching = k.has("ShiftLeft") || (!this.flying && this.collision(p, 1.75));
     const inWater = w.waterAt(p.x, p.y + 0.55, p.z);
     const forward = (k.has("KeyW") ? 1 : 0) - (k.has("KeyS") ? 1 : 0),
       strafe = (k.has("KeyD") ? 1 : 0) - (k.has("KeyA") ? 1 : 0),
-      sprint = (this.sprinting || k.has("ControlLeft")) && this.food > 5 && !this.crouching;
+      sprint =
+        controlsEnabled &&
+        (this.sprinting || k.has("ControlLeft")) &&
+        this.food > 5 &&
+        !this.crouching;
     const speed = this.flying
       ? sprint
         ? 18
@@ -1644,7 +1661,43 @@ export class Game extends WorldRenderer {
     this.torch.position.copy(this.camera.position);
     this.torch.intensity = this.hotbar[this.selected] === 48 ? 9 : 0;
   }
+  /** A cursor panel disables controls, not gravity; Escape still pauses a solo world. */
+  panelPhysicsActive() {
+    return !!(
+      this.started &&
+      !this.preview &&
+      !this.active &&
+      this.health > 0 &&
+      !document.hidden &&
+      this.pauseReason !== "death" &&
+      (this.net || PHYSICAL_PANELS.has(this.pauseReason))
+    );
+  }
+  tickPanelPhysics(dt: number) {
+    this.damageTimer = Math.max(0, this.damageTimer - dt);
+    this.damageFlash = Math.max(0, this.damageFlash - dt);
+    this.move(dt, false);
+    this.meshTimer += dt;
+    if (this.meshTimer > 0.1) {
+      this.ensure(this.position.x, this.position.z);
+      this.meshTimer = 0;
+    }
+    this.updateTimer += dt;
+    if (this.updateTimer > 0.12) {
+      this.emit();
+      this.updateTimer = 0;
+    }
+    this.saveTimer += dt;
+    if (this.saveTimer > 15) {
+      this.save(false);
+      this.saveTimer = 0;
+    }
+  }
   tick = (dt: number) => {
+    this.blockParticles?.update(dt, this.world, {
+      enabled: this.settings.particles,
+      maxParticles: this.settings.view <= 2 ? 96 : 192,
+    });
     this.faceCamera?.update(dt);
     this.avatar?.setFaceTexture(this.faceCamera?.texture ?? null);
     this.net?.tick(dt);
@@ -1664,6 +1717,7 @@ export class Game extends WorldRenderer {
       this.frameClock = 0;
     }
     if (!this.active) {
+      if (this.panelPhysicsActive()) this.tickPanelPhysics(dt);
       if (
         this.horrorCaught() ||
         (!this.net && this.difficulty === "horror" && this.horrorHunt?.view("local").length)
@@ -1707,7 +1761,7 @@ export class Game extends WorldRenderer {
     this.damageTimer -= dt;
     this.damageFlash = Math.max(0, this.damageFlash - dt);
     this.portalCooldown -= dt;
-    this.move(dt);
+    this.move(dt, !this.needsCapture);
     this.updateHorror(dt);
     if (!this.active) return;
     this.target = this.raycast();
@@ -1740,7 +1794,8 @@ export class Game extends WorldRenderer {
           );
       }
     } else this.portalTime = 0;
-    if (!this.net)
+    if (!this.net) {
+      const observer = this.needsCapture ? undefined : this.playerEyeRay();
       for (const m of this.mobs)
         m.update(
           dt,
@@ -1751,7 +1806,9 @@ export class Game extends WorldRenderer {
             this.damageFrom(n, m.group.position.clone().add(new THREE.Vector3(0, 1.4, 0)), "mob"),
           this.shootEnemy,
           this.explode,
+          observer,
         );
+    }
     const alive = this.crystals.filter((c) => c.alive).length;
     if (!this.net) this.dragon?.update(dt, alive, this.position, this.shootEnemy);
     for (const c of this.crystals)
@@ -1877,6 +1934,28 @@ export class Game extends WorldRenderer {
         p.mesh.position.addScaledVector(p.velocity, dt / steps);
         const pos = p.mesh.position;
         if (this.world.solid(pos.x, pos.y, pos.z)) {
+          if (!p.enemy) {
+            const id = this.world.get(pos.x, pos.y, pos.z);
+            if (this.settings?.particles)
+              this.blockParticles?.chip(
+                id,
+                {
+                  x: Math.floor(pos.x) + 0.5,
+                  y: Math.floor(pos.y) + 0.5,
+                  z: Math.floor(pos.z) + 0.5,
+                },
+                { x: -p.velocity.x, y: -p.velocity.y, z: -p.velocity.z },
+              );
+            if (
+              id === 12 &&
+              this.world.dimension === "end" &&
+              this.crystals.some((c) => c.alive) &&
+              performance.now() - (this.lastPillarHint ?? -Infinity) > 8000
+            ) {
+              this.lastPillarHint = performance.now();
+              this.notify("Strzała trafiła w filar. Odsuń się i celuj ponad jego szczyt.");
+            }
+          }
           remove = true;
           break;
         }
@@ -2330,8 +2409,11 @@ export class Game extends WorldRenderer {
     if (
       this.horrorCaught() ||
       !this.active ||
-      (e as MouseEvent & { sourceCapabilities?: { firesTouchEvents?: boolean } }).sourceCapabilities
-        ?.firesTouchEvents
+      (
+        e as MouseEvent & {
+          sourceCapabilities?: { firesTouchEvents?: boolean };
+        }
+      ).sourceCapabilities?.firesTouchEvents
     )
       return;
     if (document.pointerLockElement === this.canvas) {
@@ -2382,8 +2464,11 @@ export class Game extends WorldRenderer {
     if (
       this.horrorCaught() ||
       !this.active ||
-      (e as MouseEvent & { sourceCapabilities?: { firesTouchEvents?: boolean } }).sourceCapabilities
-        ?.firesTouchEvents
+      (
+        e as MouseEvent & {
+          sourceCapabilities?: { firesTouchEvents?: boolean };
+        }
+      ).sourceCapabilities?.firesTouchEvents
     )
       return;
     // Opening a dialog releases pointer lock before Chrome dispatches contextmenu;
@@ -2500,6 +2585,7 @@ export class Game extends WorldRenderer {
     this.viewArm = null;
     this.avatar?.dispose();
     this.clearDynamic();
+    this.blockParticles?.dispose();
     this.cracks.dispose();
     this.drops.clear();
     disposeEntityMaterials();

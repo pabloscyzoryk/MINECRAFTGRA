@@ -2379,6 +2379,19 @@ function restoreDragonHealth(hp, previousMax = 300, defeated = false) {
   return Math.max(0, Math.min(DRAGON_MAX_HEALTH, hp / maximum * DRAGON_MAX_HEALTH));
 }
 
+// lib/player-physics.ts
+function clearDamagePath(from, to, solid) {
+  const dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
+  const length = Math.hypot(dx, dy, dz);
+  if (!Number.isFinite(length) || length > 128) return false;
+  const steps = Math.max(1, Math.ceil(length / 0.15));
+  for (let step = 1; step < steps; step++) {
+    const t = step / steps;
+    if (solid(from.x + dx * t, from.y + dy * t, from.z + dz * t)) return false;
+  }
+  return true;
+}
+
 // lib/entities.ts
 var cubeGeo = new THREE.BoxGeometry(1, 1, 1);
 var materialCache = /* @__PURE__ */ new Map();
@@ -2428,6 +2441,15 @@ var Mob = class {
   kind;
   group = new THREE.Group();
   legs = [];
+  arms = [];
+  elbows = [];
+  hands = [];
+  tendrils = [];
+  jaw = null;
+  bow = null;
+  bowString = null;
+  bowStrings = [];
+  bowArrow = null;
   eyes = [];
   head = new THREE.Group();
   tails = [];
@@ -2447,11 +2469,30 @@ var Mob = class {
   attackCooldown = 0;
   heading = Math.random() * 6.28;
   dead = false;
-  hurt = 0;
+  /** Endermen remain neutral until provoked; the server persists the remaining anger. */
+  anger = 0;
+  eyeContact = 0;
+  /** Multiplayer provocation belongs to one player, never whichever bystander is closest. */
+  angerTarget = "";
+  hurtTime = 0;
+  get hurt() {
+    return this.hurtTime;
+  }
+  set hurt(value) {
+    const time = Number.isFinite(value) ? Math.max(0, value) : 0;
+    if (time > this.hurtTime && this.kind === "enderman" && !this.dead) this.anger = 30;
+    this.hurtTime = time;
+  }
   fuse = 0;
   size = 0.65;
   speed = 1.1;
   flying = false;
+  disposed = false;
+  gazeRay = new THREE.Ray();
+  gazeInverse = new THREE.Matrix4();
+  gazeBox = new THREE.Box3();
+  gazePoint = new THREE.Vector3();
+  gazeCenter = new THREE.Vector3();
   make() {
     const k = this.kind, g = this.group;
     const eye2 = (x, y, z, color = "#202428") => {
@@ -2530,14 +2571,26 @@ var Mob = class {
     } else if (k === "ghast") {
       cube(g, "#d7d3d5", 0, 1, 0, 2.4, 2.4, 2.4);
       for (let x = -1; x <= 1; x++)
-        for (let z = -1; z <= 1; z++)
-          this.legs.push(cube(g, "#b9b0b9", x * 0.7, -0.8, z * 0.7, 0.3, 1.5, 0.3));
+        for (let z = -1; z <= 1; z++) {
+          const root = new THREE.Group(), end = new THREE.Group();
+          root.position.set(x * 0.7, -0.12, z * 0.7);
+          cube(root, "#c5bdc8", 0, -0.35, 0, 0.29, 0.72, 0.29);
+          end.position.y = -0.69;
+          cube(end, "#aaa0b0", 0, -0.32, 0, 0.23, 0.67 + (x + z + 3) % 3 * 0.09, 0.23);
+          root.add(end);
+          g.add(root);
+          this.legs.push(root);
+          this.tendrils.push(end);
+        }
       cube(g, "#542f40", -0.58, 1.3, -1.22, 0.45, 0.17, 0.05);
       cube(g, "#542f40", 0.58, 1.3, -1.22, 0.45, 0.17, 0.05);
-      cube(g, "#542f40", 0, 0.58, -1.22, 0.5, 0.5, 0.05);
+      this.jaw = cube(g, "#542f40", 0, 0.58, -1.22, 0.5, 0.5, 0.05);
       this.size = 1.8;
     } else if (k === "slime") {
-      cube(g, "#80b76d", 0, 0.65, 0, 1.3, 1.3, 1.3);
+      const shell = cube(g, "#92cb78", 0, 0.65, 0, 1.3, 1.3, 1.3);
+      shell.userData.opacity = 0.38;
+      shell.castShadow = false;
+      cube(g, "#5f9b4e", 0, 0.6, 0.02, 0.87, 0.81, 0.87);
       eye2(-0.28, 0.86, -0.66);
       eye2(0.28, 0.86, -0.66);
       cube(g, "#263c27", 0, 0.48, -0.66, 0.36, 0.12, 0.02);
@@ -2545,14 +2598,14 @@ var Mob = class {
       cube(g, "#dcb644", 0, 1.5, 0, 0.7, 0.6, 0.6, true);
       eye2(-0.18, 1.65, -0.31);
       eye2(0.18, 1.65, -0.31);
-      for (let i = 0; i < 8; i++) {
-        const a = i / 8 * Math.PI * 2;
+      for (let i = 0; i < 12; i++) {
+        const a = i % 4 * Math.PI / 2, ring = Math.floor(i / 4);
         this.legs.push(
           cube(
             g,
             "#e6ac3b",
             Math.cos(a) * 0.6,
-            0.8 + i % 2 * 0.5,
+            0.35 + ring * 0.48,
             Math.sin(a) * 0.6,
             0.16,
             0.7,
@@ -2573,30 +2626,41 @@ var Mob = class {
       for (const x of [-0.13, 0.13]) cube(g, "#273622", x, 1.62, -0.331, 0.15, 0.2, 0.02);
     } else {
       const end = k === "enderman", skin = end ? "#25242f" : k === "zombie" ? "#698255" : k === "skeleton" ? "#cdc7b8" : "#b99a81", shirt = k === "zombie" ? "#538d95" : k === "piglin" ? "#805e43" : skin, legs = k === "zombie" ? "#615b8a" : skin;
-      cube(g, shirt, 0, 1.23, 0, end ? 0.45 : 0.64, end ? 1 : 0.75, 0.34);
-      cube(g, skin, 0, end ? 2.3 : 1.92, 0, 0.64, 0.64, 0.58);
+      if (k === "skeleton") {
+        cube(g, skin, 0, 1.23, 0.08, 0.13, 0.76, 0.13);
+        for (const y of [1.03, 1.23, 1.43]) cube(g, skin, 0, y, 0, 0.57, 0.09, 0.31);
+        cube(g, skin, 0, 0.86, 0, 0.45, 0.15, 0.27);
+      } else cube(g, shirt, 0, end ? 1.76 : 1.23, 0, end ? 0.45 : 0.64, end ? 1.1 : 0.75, 0.34);
+      cube(g, skin, 0, end ? 2.64 : 1.92, 0, 0.64, 0.64, 0.58);
       for (const x of [-0.18, 0.18])
         this.legs.push(
-          cube(g, legs, x, end ? 0.64 : 0.45, 0, end ? 0.13 : 0.24, end ? 1.3 : 0.9, 0.25)
+          cube(
+            g,
+            legs,
+            x,
+            end ? 0.77 : 0.45,
+            0,
+            end ? 0.13 : k === "skeleton" ? 0.13 : 0.24,
+            end ? 1.54 : 0.9,
+            0.25
+          )
         );
       for (const x of [-0.47, 0.47]) {
         const arm = cube(
           g,
           skin,
           x,
-          end ? 1.05 : 1.19,
-          k === "zombie" ? -0.32 : 0,
+          end ? 1.55 : 1.19,
+          0,
           end ? 0.11 : 0.2,
-          end ? 1.4 : 0.78,
+          end ? 1.7 : 0.78,
           0.23
         );
-        if (k === "zombie") arm.rotation.x = -1.35;
         this.legs.push(arm);
       }
-      eye2(-0.17, end ? 2.37 : 2, -0.3, end ? "#bf77ff" : "#292d26");
-      eye2(0.17, end ? 2.37 : 2, -0.3, end ? "#bf77ff" : "#292d26");
+      eye2(-0.17, end ? 2.71 : 2, -0.3, end ? "#bf77ff" : "#292d26");
+      eye2(0.17, end ? 2.71 : 2, -0.3, end ? "#bf77ff" : "#292d26");
       if (k === "piglin") cube(g, "#d1b192", 0, 1.8, -0.36, 0.31, 0.2, 0.19);
-      if (k === "skeleton") cube(g, "#6f5234", -0.6, 1.2, -0.25, 0.08, 0.8, 0.12);
     }
   }
   rig() {
@@ -2607,12 +2671,12 @@ var Mob = class {
     if (animal || humanoid || k === "frog" || k === "bee") {
       this.head.position.set(
         0,
-        animal ? 0.9 : k === "frog" ? 0.48 : k === "bee" ? 0.5 : k === "enderman" ? 2.12 : 1.65,
+        animal ? 0.9 : k === "frog" ? 0.48 : k === "bee" ? 0.5 : k === "enderman" ? 2.42 : 1.65,
         animal ? -0.55 : k === "frog" ? -0.3 : k === "bee" ? -0.45 : 0
       );
       for (const o of g.children.slice()) {
         if (!(o instanceof THREE.Mesh) || this.legs.includes(o) || this.wings.includes(o)) continue;
-        const isHead = animal ? o.position.z < -0.5 && o.position.y > 0.6 : k === "frog" ? o.position.y > 0.4 && o.position.z < -0.15 : k === "bee" ? o.position.z < -0.4 : o.position.y > (k === "enderman" ? 2 : 1.58);
+        const isHead = animal ? o.position.z < -0.5 && o.position.y > 0.6 : k === "frog" ? o.position.y > 0.4 && o.position.z < -0.15 : k === "bee" ? o.position.z < -0.4 : o.position.y > (k === "enderman" ? 2.3 : 1.58);
         if (isHead) {
           o.position.sub(this.head.position);
           this.head.add(o);
@@ -2640,17 +2704,326 @@ var Mob = class {
         pivot.add(l);
         return pivot;
       });
+    this.addDetails();
+    const materials = /* @__PURE__ */ new Map();
     g.traverse((o) => {
       if (o instanceof THREE.Mesh) {
-        const material = o.material.clone();
+        const source = o.material;
+        let material = materials.get(source);
+        if (!material) {
+          material = source.clone();
+          if (typeof o.userData.opacity === "number") {
+            material.transparent = true;
+            material.opacity = o.userData.opacity;
+            material.depthWrite = false;
+          }
+          materials.set(source, material);
+          this.skinMaterials.push({
+            material,
+            emissive: material.emissive.clone(),
+            intensity: material.emissiveIntensity,
+            opacity: material.opacity
+          });
+        }
         o.material = material;
-        this.skinMaterials.push({
-          material,
-          emissive: material.emissive.clone(),
-          intensity: material.emissiveIntensity
-        });
       }
     });
+  }
+  /** Small surface details share cube geometry and one instanced draw per color and joint. */
+  patches(parent, color, boxes, glow = false) {
+    const mesh = new THREE.InstancedMesh(cubeGeo, mat(color, glow), boxes.length);
+    const transform = new THREE.Object3D();
+    boxes.forEach(([x, y, z, w, h, d], i) => {
+      transform.position.set(x, y, z);
+      transform.scale.set(w, h, d);
+      transform.updateMatrix();
+      mesh.setMatrixAt(i, transform.matrix);
+    });
+    mesh.name = "surface-details";
+    mesh.castShadow = false;
+    mesh.receiveShadow = true;
+    mesh.matrixAutoUpdate = false;
+    parent.add(mesh);
+    return mesh;
+  }
+  addDetails() {
+    const k = this.kind, g = this.group, head = this.head;
+    const face = (color, x, y, z, w, h, d, glow = false) => cube(
+      head,
+      color,
+      x - head.position.x,
+      y - head.position.y,
+      z - head.position.z,
+      w,
+      h,
+      d,
+      glow
+    );
+    if (["zombie", "skeleton", "piglin", "enderman"].includes(k)) {
+      this.arms = this.legs.slice(2);
+      for (const [i, arm] of this.arms.entries()) {
+        const original = arm.children[0];
+        const color = "#" + original.material.color.getHexString();
+        const length = original.scale.y, width = k === "skeleton" ? 0.12 : original.scale.x;
+        arm.remove(original);
+        cube(arm, color, 0, -length * 0.23, 0, width, length * 0.5, 0.2);
+        const elbow = new THREE.Group(), hand2 = new THREE.Group();
+        elbow.name = "elbow";
+        elbow.position.y = -length * 0.46;
+        cube(elbow, color, 0, -length * 0.23, 0, width, length * 0.5, 0.2);
+        hand2.name = "hand";
+        hand2.position.y = -length * 0.49;
+        cube(hand2, color, 0, -0.015, -0.015, width * 1.18, 0.13, 0.23);
+        const fingers = k === "enderman" ? 0.21 : 0.09;
+        this.patches(
+          hand2,
+          color,
+          [-1, 0, 1].map((n) => [
+            n * width * 0.32,
+            -fingers * 0.5 - 0.06,
+            -0.045,
+            width * 0.22,
+            fingers,
+            0.08
+          ])
+        );
+        elbow.add(hand2);
+        arm.add(elbow);
+        this.elbows.push(elbow);
+        this.hands.push(hand2);
+        if (k === "zombie")
+          cube(arm, "#538d95", 0, -length * 0.1, 0, width * 1.11, length * 0.27, 0.225);
+        if (k === "piglin")
+          cube(arm, "#6b4935", 0, -length * 0.09, 0, width * 1.3, length * 0.27, 0.25);
+        if (k === "skeleton") cube(elbow, "#99968d", 0, 0, 0, 0.16, 0.13, 0.16);
+        arm.name = i ? "right-arm" : "left-arm";
+      }
+    }
+    if (k === "zombie") {
+      face("#41583b", 0, 2.16, -0.295, 0.64, 0.15, 0.025);
+      face("#394732", 0.06, 1.8, -0.302, 0.32, 0.07, 0.025);
+      face("#92a77a", -0.09, 1.77, -0.318, 0.09, 0.045, 0.025);
+      this.patches(head, "#526b43", [
+        [0.23, 0.39, -0.306, 0.12, 0.15, 0.026],
+        [-0.24, 0.15, -0.306, 0.1, 0.09, 0.027]
+      ]);
+      this.patches(g, "#698255", [
+        [-0.2, 0.89, -0.18, 0.14, 0.2, 0.025],
+        [0.13, 0.94, -0.18, 0.13, 0.1, 0.025],
+        [0.322, 1.26, 0.02, 0.025, 0.19, 0.15]
+      ]);
+      this.patches(g, "#334e56", [
+        [0, 1.48, -0.179, 0.18, 0.12, 0.024],
+        [-0.19, 1.2, -0.179, 0.13, 0.08, 0.024]
+      ]);
+    } else if (k === "skeleton") {
+      for (const side of [-1, 1]) face("#343b38", side * 0.17, 2, -0.301, 0.21, 0.2, 0.027);
+      face("#52574f", 0, 1.87, -0.306, 0.085, 0.12, 0.035);
+      this.jaw = face("#b7b2a4", 0, 1.62, -0.015, 0.53, 0.13, 0.55);
+      this.jaw.userData.baseY = this.jaw.position.y;
+      this.patches(
+        head,
+        "#777b70",
+        [-2, -1, 0, 1, 2].map((x) => [x * 0.087, 0.08, -0.309, 0.038, 0.095, 0.025])
+      );
+      const bow = this.bow = new THREE.Group();
+      bow.name = "bone-bow";
+      this.hands[0].add(bow);
+      cube(bow, "#745137", 0, 0, 0, 0.095, 0.5, 0.095);
+      for (const side of [-1, 1]) {
+        const limb = cube(bow, "#a57a49", 0, side * 0.34, -0.09, 0.075, 0.3, 0.07);
+        limb.rotation.x = side * 0.5;
+        cube(bow, "#594331", 0, side * 0.47, -0.17, 0.065, 0.12, 0.065);
+      }
+      this.bowString = new THREE.Group();
+      this.bowString.name = "string-nock";
+      bow.add(this.bowString);
+      for (let i = 0; i < 2; i++) {
+        const string = cube(bow, "#dfcf9f", 0, 0, 0, 0.014, 0.47, 0.014);
+        string.castShadow = false;
+        this.bowStrings.push(string);
+      }
+      this.bowArrow = new THREE.Group();
+      bow.add(this.bowArrow);
+      cube(this.bowArrow, "#b8a787", 0, 0, -0.36, 0.04, 0.04, 0.72);
+      cube(this.bowArrow, "#b7beb8", 0, 0, -0.76, 0.09, 0.08, 0.17);
+    } else if (k === "enderman") {
+      for (const eye2 of this.eyes) {
+        eye2.scale.x = 0.245;
+        eye2.scale.y = 0.06;
+        eye2.userData.openHeight = 0.06;
+      }
+      face("#e5bbff", -0.17, 2.71, -0.313, 0.055, 0.035, 0.026, true);
+      face("#e5bbff", 0.17, 2.71, -0.313, 0.055, 0.035, 0.026, true);
+      face("#16161e", 0, 2.5, -0.303, 0.36, 0.045, 0.02);
+      this.patches(g, "#383140", [
+        [0.23, 1.83, 0, 0.018, 0.65, 0.15],
+        [-0.23, 1.62, 0, 0.018, 0.45, 0.14],
+        [0, 1.42, -0.178, 0.16, 0.12, 0.023]
+      ]);
+    } else if (k === "piglin") {
+      for (const side of [-1, 1]) {
+        face("#b99077", side * 0.4, 2.07, 0, 0.24, 0.25, 0.16);
+        face("#d1a58b", side * 0.43, 2.07, -0.085, 0.13, 0.15, 0.018);
+        face("#f0e1b8", side * 0.2, 1.79, -0.41, 0.075, 0.26, 0.08);
+        face("#775743", side * 0.075, 1.82, -0.46, 0.065, 0.045, 0.02);
+      }
+      this.patches(g, "#46362c", [
+        [0, 0.92, 0, 0.67, 0.13, 0.38],
+        [0.18, 1.2, -0.18, 0.11, 0.5, 0.023]
+      ]);
+      cube(g, "#dfb64e", 0, 0.92, -0.205, 0.19, 0.17, 0.055);
+      const sword = new THREE.Group();
+      sword.name = "golden-cleaver";
+      sword.position.y = 0.08;
+      this.hands[1].add(sword);
+      cube(sword, "#5c402c", 0, -0.09, 0, 0.085, 0.26, 0.085);
+      cube(sword, "#d8ac3a", 0, -0.21, 0, 0.32, 0.075, 0.12);
+      cube(sword, "#ecc85d", 0, -0.48, 0, 0.17, 0.49, 0.065);
+      cube(sword, "#fff0a8", -0.065, -0.48, -0.012, 0.028, 0.49, 0.07);
+      cube(sword, "#f5d987", 0, -0.77, 0, 0.1, 0.09, 0.055);
+    } else if (k === "creeper") {
+      this.patches(g, "#4d723c", [
+        [-0.18, 1.39, -0.25, 0.19, 0.18, 0.027],
+        [0.17, 0.88, -0.25, 0.2, 0.21, 0.027],
+        [0.33, 1.17, 0, 0.025, 0.16, 0.27],
+        [-0.33, 1.05, 0, 0.025, 0.29, 0.17],
+        [0.06, 1.21, 0.25, 0.21, 0.22, 0.027]
+      ]);
+      this.patches(head, "#a3ba74", [
+        [-0.25, 0.47, -0.34, 0.13, 0.16, 0.025],
+        [0.08, 0.54, -0.34, 0.2, 0.1, 0.025],
+        [0.385, 0.19, 0, 0.024, 0.2, 0.18]
+      ]);
+      this.patches(head, "#526c3d", [
+        [0.24, 0.32, -0.34, 0.16, 0.11, 0.025],
+        [-0.18, -0.11, -0.34, 0.11, 0.12, 0.025]
+      ]);
+      for (const leg of this.legs) cube(leg, "#3f6133", 0, -0.19, -0.02, 0.28, 0.14, 0.35);
+    } else if (k === "ghast") {
+      this.patches(g, "#a89daa", [
+        [-0.58, 0.99, -1.226, 0.11, 0.4, 0.023],
+        [0.58, 0.9, -1.226, 0.11, 0.58, 0.023],
+        [-0.81, 1.25, -1.226, 0.12, 0.12, 0.023],
+        [0.81, 1.25, -1.226, 0.12, 0.12, 0.023],
+        [-0.95, 1.92, -1.208, 0.25, 0.12, 0.02],
+        [0.8, -0.03, -1.208, 0.31, 0.17, 0.02]
+      ]);
+      this.patches(g, "#ebe5e5", [
+        [-1.211, 0.7, 0, 0.02, 0.4, 0.6],
+        [1.211, 1.65, -0.6, 0.02, 0.27, 0.45],
+        [0.2, 2.211, 0.3, 0.4, 0.02, 0.7]
+      ]);
+    } else if (k === "blaze") {
+      cube(g, "#f77722", 0, 0.72, 0, 0.35, 0.72, 0.35, true);
+      cube(g, "#fff2a1", 0, 0.83, 0, 0.2, 0.39, 0.2, true);
+      this.patches(g, "#995727", [
+        [-0.22, 1.74, -0.31, 0.21, 0.075, 0.026],
+        [0.22, 1.74, -0.31, 0.21, 0.075, 0.026],
+        [0, 1.37, -0.31, 0.35, 0.075, 0.024]
+      ]);
+      for (const rod of this.legs) cube(rod, "#ffdd77", 0, 0, 0, 1.13, 0.18, 1.13, true);
+    } else if (k === "slime") {
+      this.patches(g, "#acd98f", [
+        [-0.32, 1.08, -0.667, 0.36, 0.075, 0.023],
+        [-0.48, 0.87, -0.667, 0.075, 0.27, 0.023],
+        [0.661, 0.98, -0.26, 0.022, 0.15, 0.3]
+      ]);
+      this.patches(g, "#79bc63", [
+        [0.22, 0.85, 0.17, 0.19, 0.2, 0.2],
+        [-0.2, 0.4, 0.28, 0.2, 0.15, 0.16]
+      ]);
+    } else if (k === "pig") {
+      for (const side of [-1, 1]) {
+        face("#a95f65", side * 0.075, 0.98, -1.103, 0.055, 0.055, 0.026);
+        face("#d99590", side * 0.31, 1.35, -0.71, 0.2, 0.2, 0.13);
+      }
+    } else if (k === "cow") {
+      face("#b9968b", 0, 0.92, -1.013, 0.48, 0.22, 0.085);
+      for (const side of [-1, 1]) face("#4d3932", side * 0.12, 0.92, -1.063, 0.075, 0.055, 0.018);
+    }
+  }
+  /** The mob faces local -Z; positive X rotation carries a hanging hand forward. */
+  poseArms(progress) {
+    const idle = this.kind === "zombie" ? 1.1 : 0.035;
+    const smooth2 = (t) => {
+      const p = THREE.MathUtils.clamp(t, 0, 1);
+      return p * p * (3 - 2 * p);
+    };
+    const contact = 0.31 / 0.65;
+    const angle = progress < 0 ? idle : progress < 0.23 ? THREE.MathUtils.lerp(idle, 2.6, smooth2(progress / 0.23)) : progress < contact ? THREE.MathUtils.lerp(2.6, 1.15, smooth2((progress - 0.23) / (contact - 0.23))) : THREE.MathUtils.lerp(1.15, idle, smooth2((progress - contact) / (1 - contact)));
+    for (const [i, arm] of this.arms.entries()) {
+      arm.rotation.set(
+        angle + (progress < 0 ? Math.sin(this.gait + i * Math.PI) * 0.45 * this.walkBlend : 0),
+        0,
+        (i ? 1 : -1) * 0.055,
+        "YXZ"
+      );
+      this.elbows[i].rotation.set(
+        progress >= 0 && progress < contact ? Math.sin(progress / contact * Math.PI) * 0.38 : 0.04,
+        0,
+        0
+      );
+    }
+    if (this.bow) {
+      const ranged = this.rangedAttack && progress >= 0 && progress < 1;
+      if (ranged) {
+        const blend = progress < contact ? smooth2(progress / 0.15) : 1 - smooth2((progress - contact) / (1 - contact));
+        const left = this.arms[0], right = this.arms[1];
+        left.rotation.set(
+          THREE.MathUtils.lerp(idle, Math.PI / 2, blend),
+          -0.55 * blend,
+          -0.055 * (1 - blend),
+          "YXZ"
+        );
+        this.elbows[0].rotation.set(0.04 * (1 - blend), 0, 0);
+        const draw = -0.185 + 0.45 * (progress < contact ? Math.sin(progress / contact * Math.PI / 2) : 1);
+        const target = new THREE.Vector3(0, this.elbows[0].position.y + this.hands[0].position.y, 0).applyQuaternion(left.quaternion).add(left.position).add(new THREE.Vector3(0, 0, draw)).sub(right.position);
+        const upper = -this.elbows[1].position.y, lower = -this.hands[1].position.y;
+        const distance3 = THREE.MathUtils.clamp(
+          Math.hypot(target.x, target.z),
+          Math.abs(upper - lower) + 1e-5,
+          upper + lower - 1e-5
+        );
+        const heading = Math.atan2(-target.x, -target.z);
+        const shoulder = Math.acos(
+          THREE.MathUtils.clamp(
+            (upper * upper + distance3 * distance3 - lower * lower) / (2 * upper * distance3),
+            -1,
+            1
+          )
+        );
+        const bend = Math.PI - Math.acos(
+          THREE.MathUtils.clamp(
+            (upper * upper + lower * lower - distance3 * distance3) / (2 * upper * lower),
+            -1,
+            1
+          )
+        );
+        right.rotation.set(
+          THREE.MathUtils.lerp(idle, Math.PI / 2, blend),
+          (heading + shoulder) * blend,
+          0.055 * (1 - blend),
+          "YXZ"
+        );
+        this.elbows[1].rotation.set(0.04 * (1 - blend), 0, bend * blend);
+      }
+      this.bow.quaternion.copy(this.arms[0].quaternion).multiply(this.elbows[0].quaternion).invert();
+      const pull = this.rangedAttack && progress >= 0 && progress < contact ? Math.sin(progress / contact * Math.PI / 2) : 0;
+      const drawPoint = new THREE.Vector3(0, 0, -0.185 + pull * 0.45);
+      if (this.bowString) this.bowString.position.copy(drawPoint);
+      this.bowStrings.forEach((string, i) => {
+        const tip = new THREE.Vector3(0, (i ? 1 : -1) * 0.47, -0.17);
+        const segment = drawPoint.clone().sub(tip);
+        string.position.copy(tip).add(drawPoint).multiplyScalar(0.5);
+        string.scale.set(0.014, segment.length(), 0.014);
+        string.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), segment.normalize());
+      });
+      if (this.bowArrow) {
+        this.bowArrow.position.copy(drawPoint);
+        this.bowArrow.visible = !ranged || progress < contact;
+      }
+    }
   }
   die() {
     if (this.dead) return;
@@ -2658,12 +3031,51 @@ var Mob = class {
     this.deathTime = 0;
     this.state = "dead";
     this.attackClock = 0;
+    this.anger = 0;
+    this.eyeContact = 0;
+    this.angerTarget = "";
+  }
+  /** A narrow band across the actual animated eyes; aiming at its body never provokes it. */
+  looksIntoEyes(observer, world) {
+    if (!observer || this.kind !== "enderman" || this.dead || this.eyes.length < 2) return false;
+    const { origin, direction } = observer;
+    if (![origin.x, origin.y, origin.z, direction.x, direction.y, direction.z].every(
+      Number.isFinite
+    ) || direction.lengthSq() < 1e-8)
+      return false;
+    this.head.updateWorldMatrix(true, false);
+    this.gazeCenter.copy(this.eyes[0].position).add(this.eyes[1].position).multiplyScalar(0.5);
+    this.gazePoint.copy(this.gazeCenter).applyMatrix4(this.head.matrixWorld);
+    if (origin.distanceToSquared(this.gazePoint) > 24 * 24) return false;
+    this.gazeInverse.copy(this.head.matrixWorld).invert();
+    this.gazeRay.origin.copy(origin);
+    this.gazeRay.direction.copy(direction);
+    this.gazeRay.applyMatrix4(this.gazeInverse);
+    if (this.gazeRay.origin.z >= this.gazeCenter.z) return false;
+    this.gazeBox.min.set(
+      this.gazeCenter.x - 0.29,
+      this.gazeCenter.y - 0.08,
+      this.gazeCenter.z - 0.045
+    );
+    this.gazeBox.max.set(
+      this.gazeCenter.x + 0.29,
+      this.gazeCenter.y + 0.08,
+      this.gazeCenter.z + 0.045
+    );
+    if (!this.gazeRay.intersectBox(this.gazeBox, this.gazePoint)) return false;
+    this.gazePoint.applyMatrix4(this.head.matrixWorld);
+    return clearDamagePath(origin, this.gazePoint, (x, y, z) => world.solid(x, y, z));
   }
   dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.group.traverse((o) => {
+      if (o instanceof THREE.InstancedMesh) o.dispose();
+    });
     for (const m of this.skinMaterials) m.material.dispose();
     this.skinMaterials = [];
   }
-  update(dt, _t, player, world, damage, shoot, explode) {
+  update(dt, _t, player, world, damage, shoot, explode, observer) {
     this.elapsed += dt;
     const t = this.elapsed, k = this.kind, pos = this.group.position;
     if (this.dead) {
@@ -2673,7 +3085,7 @@ var Mob = class {
       this.group.position.y -= dt * 0.12;
       for (const m of this.skinMaterials) {
         m.material.transparent = true;
-        m.material.opacity = Math.max(0, 1 - (this.deathTime - 0.6) / 0.65);
+        m.material.opacity = m.opacity * Math.max(0, 1 - (this.deathTime - 0.6) / 0.65);
       }
       if (this.deathTime > 1.3) this.group.visible = false;
       return;
@@ -2681,7 +3093,17 @@ var Mob = class {
     this.timer -= dt;
     this.attackCooldown -= dt;
     this.hurt = Math.max(0, this.hurt - dt);
-    const dist = pos.distanceTo(player), alert = this.hostile && dist < 27, ranged = ["skeleton", "ghast", "blaze"].includes(k);
+    this.anger = Math.max(0, this.anger - dt);
+    if (k === "enderman" && dt > 0) {
+      const watching = this.looksIntoEyes(observer, world);
+      this.eyeContact = watching ? Math.min(0.25, this.eyeContact + Math.max(0, dt)) : 0;
+      if (this.eyeContact >= 0.25) this.anger = 30;
+    }
+    if (k === "enderman" && this.anger <= 0) {
+      this.attackClock = 0;
+      if (this.eyeContact <= 0) this.angerTarget = "";
+    }
+    const dist = pos.distanceTo(player), alert = this.hostile && (k !== "enderman" || this.anger > 0) && dist < 27, ranged = ["skeleton", "ghast", "blaze"].includes(k);
     if (alert) this.heading = Math.atan2(player.x - pos.x, player.z - pos.z);
     else if (this.timer <= 0) {
       this.heading += Math.random() * 2.5 - 1.25;
@@ -2759,30 +3181,37 @@ var Mob = class {
       graze ? -0.7 + Math.sin(t * 6) * 0.09 : alert ? -0.08 : Math.sin(t * 1.6) * 0.045,
       1 - Math.exp(-dt * 5)
     );
-    const blink = t % 4.8 > 4.64 ? 0.13 : 1;
-    for (const e of this.eyes) e.scale.y = 0.09 * blink;
+    const blink = k !== "enderman" && t % 4.8 > 4.64 ? 0.13 : 1;
+    for (const e of this.eyes) e.scale.y = (e.userData.openHeight ?? 0.09) * blink;
     this.legs.forEach((l, i) => {
       if (k === "ghast") {
         l.rotation.x = Math.sin(t * 2.1 + i * 0.6) * 0.27;
         l.rotation.z = Math.cos(t * 1.7 + i) * 0.17;
       } else if (k === "blaze") {
-        const a = t * (i % 2 ? 1.2 : -0.9) + i * Math.PI / 4;
+        const ring = Math.floor(i / 4), radius = 0.52 + ring * 0.1 + this.attackClock * 0.32;
+        const a = t * (ring % 2 ? 1.2 : -0.9) + i % 4 * Math.PI / 2 + ring * 0.4;
         l.position.set(
-          Math.cos(a) * (0.63 + this.attackClock * 0.45),
-          0.8 + i % 2 * 0.5 + Math.sin(t * 2 + i) * 0.15,
-          Math.sin(a) * 0.63
+          Math.cos(a) * radius,
+          0.35 + ring * 0.48 + Math.sin(t * 2 + i) * 0.1,
+          Math.sin(a) * radius
         );
         l.rotation.z = Math.sin(t + i) * 0.25;
       } else {
         l.rotation.x = Math.sin(this.gait + (i === 0 || i === 3 ? 0 : Math.PI)) * 0.65 * this.walkBlend;
-        if (["zombie", "skeleton", "piglin", "enderman"].includes(k) && i >= 2) {
-          l.rotation.x += k === "zombie" ? -1.2 : 0;
-          if (this.attackClock > 0)
-            l.rotation.x -= Math.sin((0.65 - this.attackClock) / 0.65 * Math.PI) * 1.8;
-          l.rotation.z = (i === 2 ? -1 : 1) * (0.04 + Math.sin(t * 2) * 0.025);
-        }
       }
     });
+    const attackProgress = this.attackClock > 0 ? THREE.MathUtils.clamp((0.65 - this.attackClock) / 0.65, 0, 1) : -1;
+    this.poseArms(attackProgress);
+    this.tendrils.forEach((tip, i) => {
+      tip.rotation.x = Math.sin(t * 2.1 + i * 0.6 - 0.65) * 0.31;
+      tip.rotation.z = Math.cos(t * 1.7 + i - 0.4) * 0.2;
+    });
+    if (this.jaw) {
+      if (k === "ghast")
+        this.jaw.scale.y = 0.5 + (attackProgress >= 0 ? Math.sin(attackProgress * Math.PI) * 0.65 : 0);
+      else
+        this.jaw.position.y = this.jaw.userData.baseY - (attackProgress >= 0 ? Math.sin(attackProgress * Math.PI) * 0.09 : 0);
+    }
     this.tails.forEach((tail, i) => {
       tail.rotation.y = Math.sin(t * (k === "fox" ? 3 : 5) + i) * 0.38;
       tail.rotation.x = (graze ? -0.1 : 0.15) + Math.sin(t * 2) * 0.12;
@@ -3681,6 +4110,8 @@ var Room = class {
   now;
   seed = 24680;
   clock = 90;
+  restoredProvocationsUntil = 0;
+  restoredProvocations = /* @__PURE__ */ new Set();
   tickId = 0;
   sequence = 0;
   won = false;
@@ -3816,6 +4247,7 @@ var Room = class {
     p.nick = nick;
     p.skin = skin;
     p.seen = this.now();
+    this.restoredProvocations.delete(id);
     const selectedDifficulty = normalizeDifficulty(
       difficulty,
       normalizeDifficulty(p.profile.difficulty)
@@ -3924,20 +4356,20 @@ var Room = class {
       p.dimension = m.dimension;
       p.yaw = Number.isFinite(m.yaw) ? Number(m.yaw) : 0;
       p.pitch = Math.max(-1.54, Math.min(1.54, Number(m.pitch) || 0));
-      p.moving = !!m.moving;
       if (p.active && m.active !== true && p.difficulty === "horror" && !this.horrorHunt.view(id).some((hunt) => hunt.phase === "caught"))
         this.send(id, { type: "horrorReset" });
       p.active = m.active === true;
+      p.moving = p.active && !!m.moving;
       if (m.furnaceKey === null) this.furnaceViewers.delete(id);
       else if (typeof m.furnaceKey === "string" && this.furnaces[m.furnaceKey] && this.furnaceInReach(p, m.furnaceKey))
         this.furnaceViewers.set(id, m.furnaceKey);
-      p.sprinting = m.sprinting === true;
-      p.crouch = !!m.crouch;
-      p.swing = !!m.swing;
+      p.sprinting = p.active && m.sprinting === true;
+      p.crouch = p.active && !!m.crouch;
+      p.swing = p.active && !!m.swing;
       p.swingProgress = p.swing ? Math.max(0, Math.min(1, Number(m.swingProgress) || 0)) : -1;
       p.held = Number.isInteger(m.held) && (BLOCKS[Number(m.held)] || ITEMS.some((i) => i.id === m.held)) ? Number(m.held) : 0;
       if (p.held > 0 && !this.owns(p, p.held)) p.held = 0;
-      p.blocking = !!m.blocking && p.held === 126;
+      p.blocking = p.active && !!m.blocking && p.held === 126;
       p.grounded = !!m.grounded;
       p.armor = p.equipment.chest;
       p.seen = this.now();
@@ -4565,6 +4997,11 @@ var Room = class {
     if (m.dead) return;
     m.hp -= n;
     m.hurt = 0.3;
+    if (m.kind === "enderman") {
+      m.anger = 30;
+      m.angerTarget = p.id;
+      m.eyeContact = 0;
+    }
     if (m.hp <= 0) {
       m.die();
       this.drop(
@@ -4807,13 +5244,61 @@ var Room = class {
     }
     for (const [dimension, r] of this.regions) {
       const targets = active.filter((p) => p.dimension === dimension && p.health > 0);
+      for (const m of r.mobs.values()) {
+        if (m.kind !== "enderman") continue;
+        const owner = this.players.get(m.angerTarget);
+        if (!m.dead && m.anger > 0 && this.restoredProvocations.has(m.angerTarget) && owner?.seen === 0 && owner.health > 0 && owner.dimension === dimension && this.now() < this.restoredProvocationsUntil) {
+          m.attackClock = 0;
+          m.anger = Math.max(0, m.anger - dt);
+          if (m.anger > 0) continue;
+          m.angerTarget = "";
+          m.eyeContact = 0;
+        }
+        if (m.dead || m.anger > 0 && !targets.some((p) => p.id === m.angerTarget)) {
+          m.anger = 0;
+          m.angerTarget = "";
+          m.eyeContact = 0;
+          m.attackClock = 0;
+        } else if (m.anger <= 0 && m.eyeContact <= 0) m.angerTarget = "";
+      }
       if (!targets.length) continue;
+      const observers = targets.filter((p) => p.active).map((p) => ({
+        player: p,
+        ray: new THREE2.Ray(
+          vec(p.p).add(new THREE2.Vector3(0, p.crouch ? 1.3 : 1.62, 0)),
+          new THREE2.Vector3(
+            -Math.sin(p.yaw) * Math.cos(p.pitch),
+            Math.sin(p.pitch),
+            -Math.cos(p.yaw) * Math.cos(p.pitch)
+          )
+        )
+      }));
       r.fluid.tick(dt);
       for (const [id, m] of r.mobs) {
+        if (m.kind === "enderman" && m.anger > 0 && !targets.some((p2) => p2.id === m.angerTarget))
+          continue;
         let p = targets[0];
         for (const q of targets)
           if (vec(q.p).distanceToSquared(m.group.position) < vec(p.p).distanceToSquared(m.group.position))
             p = q;
+        if (m.kind === "enderman") {
+          const provoker = m.anger > 0 ? targets.find((q) => q.id === m.angerTarget) : void 0;
+          if (provoker) p = provoker;
+          else {
+            let watching;
+            for (const observer of observers)
+              if (m.looksIntoEyes(observer.ray, r.world) && (!watching || vec(observer.player.p).distanceToSquared(m.group.position) < vec(watching.player.p).distanceToSquared(m.group.position)))
+                watching = observer;
+            if (watching) {
+              p = watching.player;
+              if (m.angerTarget !== p.id) m.eyeContact = 0;
+              m.angerTarget = p.id;
+            } else {
+              m.angerTarget = "";
+              m.eyeContact = 0;
+            }
+          }
+        }
         m.update(
           dt,
           this.clock,
@@ -4846,7 +5331,8 @@ var Room = class {
                     const a = Math.floor(pos.x + x), b2 = Math.floor(pos.y + y), c = Math.floor(pos.z + z), block = r.world.get(a, b2, c);
                     if (block && ![12, 13, 18, 35].includes(block)) r.world.set(a, b2, c, 0);
                   }
-          }
+          },
+          m.kind === "enderman" ? observers.find((observer) => observer.player === p)?.ray : void 0
         );
         if (m.dead && m.deathTime > 1.4 || !targets.some((q) => vec(q.p).distanceTo(m.group.position) < 110)) {
           m.dispose();
@@ -5002,7 +5488,11 @@ var Room = class {
       dead: m.dead,
       ...values,
       target: [999, 0, 999],
-      head: [round(m.head.rotation.x), round(m.head.rotation.y)]
+      head: [round(m.head.rotation.x), round(m.head.rotation.y)],
+      rangedAttack: m.rangedAttack,
+      anger: round(m.anger),
+      eyeContact: round(m.eyeContact),
+      angerTarget: m.angerTarget || void 0
     };
   }
   frame() {
@@ -5096,6 +5586,8 @@ var Room = class {
     if (s.version !== 1) throw Error("Unsupported world");
     this.facePeers.clear();
     this.clock = s.clock;
+    this.restoredProvocationsUntil = this.now() + 12e3;
+    this.restoredProvocations.clear();
     this.tickId = s.tick;
     this.sequence = s.sequence;
     this.won = s.won;
@@ -5179,6 +5671,11 @@ var Room = class {
         this.ensure(rr.d, wire.p[0], wire.p[2]);
         const m = new Mob(wire.kind, wire.p[0], wire.p[2], r.world);
         for (const k of mobFields) m[k] = wire[k];
+        m.anger = Math.max(0, Math.min(30, Number(wire.anger) || 0));
+        m.eyeContact = Math.max(0, Math.min(0.25, Number(wire.eyeContact) || 0));
+        m.angerTarget = typeof wire.angerTarget === "string" && wire.angerTarget.length <= 64 ? wire.angerTarget : "";
+        if (m.anger > 0 && m.angerTarget) this.restoredProvocations.add(m.angerTarget);
+        m.rangedAttack = !!wire.rangedAttack;
         m.dead = wire.dead;
         m.group.position.fromArray(wire.p);
         m.group.rotation.set(...wire.r);
@@ -5198,16 +5695,30 @@ var RENEW = "if redis.call('GET',KEYS[1])==ARGV[1] then return redis.call('PEXPI
 var RELEASE = "if redis.call('GET',KEYS[1])==ARGV[1] then return redis.call('DEL',KEYS[1]) else return 0 end";
 var PERSIST = "if redis.call('GET',KEYS[1])==ARGV[1] then redis.call('SET',KEYS[2],ARGV[2]);return 1 else return 0 end";
 var REDIS_CODEC_PREFIX = "MINECRAFTGRA:GZIP1:";
+var DEFAULT_REDIS_SNAPSHOT_BYTES = 6 * 1024 * 1024;
+var MAX_REDIS_JSON_BYTES = 64 * 1024 * 1024;
+var STORAGE_LIMIT_MESSAGE = "\u015Awiat osi\u0105gn\u0105\u0142 bezpieczny limit zapisu. Sesja zosta\u0142a zatrzymana; ostatni potwierdzony zapis jest zachowany. Administrator musi sprawdzi\u0107 bud\u017Cet pami\u0119ci \u015Bwiata.";
+function redisSnapshotByteLimit(value = void 0) {
+  if (value === void 0 || value === "") return DEFAULT_REDIS_SNAPSHOT_BYTES;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1024 * 1024 || n > 12 * 1024 * 1024)
+    throw Error("WORLD_REDIS_MAX_SNAPSHOT_BYTES must be an integer from 1048576 to 12582912");
+  return n;
+}
 function encodeRedis(value, forceCompression = false) {
-  const json = JSON.stringify(value);
+  return encodeRedisJson(JSON.stringify(value), forceCompression);
+}
+function encodeRedisJson(json, forceCompression) {
   if (!forceCompression && Buffer.byteLength(json) <= 1024) return json;
   const encoded = REDIS_CODEC_PREFIX + gzipSync(json, { level: 1 }).toString("base64");
   return forceCompression || encoded.length < Buffer.byteLength(json) ? encoded : json;
 }
 function decodeRedis(value) {
   const json = value.startsWith(REDIS_CODEC_PREFIX) ? gunzipSync(Buffer.from(value.slice(REDIS_CODEC_PREFIX.length), "base64"), {
-    maxOutputLength: 64 * 1024 * 1024
+    maxOutputLength: MAX_REDIS_JSON_BYTES
   }).toString("utf8") : value;
+  if (Buffer.byteLength(json) > MAX_REDIS_JSON_BYTES)
+    throw RangeError("Redis JSON exceeds the decompressed size limit");
   return JSON.parse(json);
 }
 async function redisStore(url) {
@@ -5236,6 +5747,9 @@ var Gateway = class {
   constructor(options = {}) {
     this.options = options;
     this.local = options.local ?? !process.env.VERCEL;
+    this.maxSnapshotBytes = redisSnapshotByteLimit(
+      options.maxSnapshotBytes ?? process.env.WORLD_REDIS_MAX_SNAPSHOT_BYTES
+    );
     this.namespace = options.namespace ?? process.env.WORLD_NAMESPACE ?? "minecraftgra-v1";
     if (!/^[a-zA-Z0-9_-]{1,80}$/.test(this.namespace)) throw Error("Invalid WORLD_NAMESPACE");
     this.out = this.namespace + ":out";
@@ -5256,6 +5770,8 @@ var Gateway = class {
   busy = false;
   starting = null;
   closed = false;
+  storageBlocked = false;
+  maxSnapshotBytes;
   local;
   namespace;
   out;
@@ -5298,6 +5814,7 @@ var Gateway = class {
         }
       this.leaseUntil = Infinity;
     }
+    if (this.storageBlocked) return;
     this.lastTick = Date.now();
     this.timer = setInterval(() => void this.step(), 50);
     await this.step();
@@ -5306,7 +5823,7 @@ var Gateway = class {
     return new Room((id, data) => this.broadcast({ type: "delivery", id, data }));
   }
   async step() {
-    if (this.busy || this.closed) return;
+    if (this.busy || this.closed || this.storageBlocked) return;
     this.busy = true;
     try {
       const now = Date.now();
@@ -5331,6 +5848,13 @@ var Gateway = class {
           this.broadcast({ type: "delivery", id: "*", data: { type: "resync" } });
         }
       }
+      if (this.storageBlocked) {
+        this.room = null;
+        this.leaseUntil = 0;
+        if (this.store)
+          await this.store.eval(RELEASE, { keys: [this.lease], arguments: [this.node] });
+        return;
+      }
       if (this.room && now < this.leaseUntil) {
         const dt = Math.min(0.1, Math.max(1e-3, (now - this.lastTick) / 1e3));
         this.room.tick(dt);
@@ -5354,18 +5878,44 @@ var Gateway = class {
     }
   }
   async persist() {
-    if (!this.room) return false;
+    if (!this.room || this.storageBlocked) return false;
     const data = this.room.save();
-    if (this.store)
-      return await this.store.eval(PERSIST, {
+    if (this.store) {
+      const json = JSON.stringify(data);
+      const encoded = Buffer.byteLength(json) > MAX_REDIS_JSON_BYTES ? null : encodeRedisJson(json, true);
+      if (encoded === null || Buffer.byteLength(encoded) > this.maxSnapshotBytes) {
+        this.suspendStorage();
+        await Promise.allSettled([
+          this.store.publish(this.out, encodeRedis({ type: "storageLimit", id: "*" })),
+          this.store.eval(RELEASE, { keys: [this.lease], arguments: [this.node] })
+        ]);
+        return false;
+      }
+      const saved = await this.store.eval(PERSIST, {
         keys: [this.lease, this.snapshot],
-        arguments: [this.node, encodeRedis(data, true)]
-      }) === 1;
+        arguments: [this.node, encoded]
+      });
+      return saved === 1 && !this.storageBlocked;
+    }
     if (this.options.file) await writeFile(this.options.file, JSON.stringify(data), "utf8");
     return true;
   }
+  suspendStorage() {
+    if (this.storageBlocked) return;
+    this.storageBlocked = true;
+    this.room = null;
+    this.leaseUntil = 0;
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    for (const p of this.peers.values()) {
+      this.send(p.socket, { type: "error", fatal: true, message: STORAGE_LIMIT_MESSAGE });
+      p.socket.close(1013, "World storage limit");
+    }
+  }
   broadcast(packet) {
+    if (this.storageBlocked) return;
     const publish = () => {
+      if (this.storageBlocked) return;
       const camera = packet.type === "delivery" && packet.data?.type === "faceFrame" && packet.data.frame !== null;
       if (camera && this.cameraPublishing) return;
       if (this.store) {
@@ -5384,6 +5934,11 @@ var Gateway = class {
     } else publish();
   }
   route(packet) {
+    if (packet.type === "storageLimit") {
+      this.suspendStorage();
+      return;
+    }
+    if (this.storageBlocked) return;
     if (packet.type === "delivery" && packet.data?.type === "frame")
       this.cameraPlayers = Math.max(1, Math.min(16, packet.data.players?.length ?? 1));
     if (packet.type === "connection") {
@@ -5427,7 +5982,7 @@ var Gateway = class {
       }
   }
   forward(packet) {
-    if (this.closed) return;
+    if (this.closed || this.storageBlocked) return;
     if (!this.store || this.room && Date.now() < this.leaseUntil) this.handle(packet);
     else {
       const camera = packet.type === "faceFrame" && packet.data !== null;
@@ -5440,6 +5995,7 @@ var Gateway = class {
     }
   }
   handle(packet) {
+    if (this.storageBlocked) return;
     const room = this.room;
     if (!room) return;
     const { id, data } = packet;
@@ -5494,6 +6050,11 @@ var Gateway = class {
       ws.close(1011);
       return;
     }
+    if (this.storageBlocked) {
+      this.send(ws, { type: "error", fatal: true, message: STORAGE_LIMIT_MESSAGE });
+      ws.close(1013, "World storage limit");
+      return;
+    }
     const peer = {
       id: "",
       nick: "",
@@ -5513,6 +6074,7 @@ var Gateway = class {
     }, 1e4);
     const rotate = setTimeout(() => ws.close(1012, "Reconnect"), 27e4);
     ws.on("message", (raw, isBinary) => {
+      if (this.storageBlocked) return;
       if (isBinary) return ws.close(1003);
       const now = Date.now();
       if (now - peer.reset > 1e3) {
@@ -5601,13 +6163,31 @@ var Gateway = class {
   async close() {
     this.closed = true;
     if (this.timer) clearInterval(this.timer);
+    this.timer = null;
     for (const p of this.peers.values()) p.socket.close(1001);
-    await this.persist();
-    if (this.store) {
-      await this.store.eval(RELEASE, { keys: [this.lease], arguments: [this.node] });
-      await this.store.close();
+    const errors = [];
+    try {
+      await this.persist();
+    } catch (error) {
+      errors.push(error);
+    } finally {
+      if (this.store) {
+        try {
+          await this.store.eval(RELEASE, { keys: [this.lease], arguments: [this.node] });
+        } catch (error) {
+          errors.push(error);
+        }
+        try {
+          await this.store.close();
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      this.room = null;
+      this.leaseUntil = 0;
     }
-    this.room = null;
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, "Gateway cleanup failed");
   }
 };
 function createGameServer(options = {}) {

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Game } from "../lib/engine";
 import { miningDuration } from "../lib/mining";
+import { DEFAULT_SETTINGS } from "../lib/settings";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 
@@ -15,6 +16,7 @@ function fixture(id: number, held = 0) {
     hotbar: [held],
     selected: 0,
     mode: "survival",
+    settings: { ...DEFAULT_SETTINGS },
     net: null,
     mining: 0,
     mineKey: "",

@@ -47,10 +47,13 @@ W panelu projektu Vercel przejdź do **Settings → Environment Variables** i do
 |---|---|
 | `REDIS_URL` | Prywatny adres klienta Redis, zaczynający się od `redis://` lub `rediss://` |
 | `WORLD_NAMESPACE` | `minecraftgra-production-v1` |
+| `WORLD_REDIS_MAX_SNAPSHOT_BYTES` | Opcjonalnie `6291456` (domyślne 6 MiB skompresowanego zapisu) |
 
 Adres i hasło skopiuj z ustawień połączenia bazy. Wymagany jest zwykły protokół Redis, **nie adres API REST**. Dla bazy z TLS użyj adresu `rediss://` podanego przez dostawcę. Dane wpisuj wyłącznie w zmiennych serwerowych Vercela; nie dodawaj ich do repozytorium, README ani pliku HTML. Plik [`.env.example`](../.env.example) zawiera tylko nazwy ustawień.
 
 `WORLD_NAMESPACE` przyjmuje litery łacińskie, cyfry, `_` i `-` — maksymalnie 80 znaków. Wszystkie instancje korzystające z tej samej bazy i namespace współdzielą jeden świat.
+
+Jeżeli tej samej bazy używa inny projekt, zachowaj istniejące połączenie i ustaw dla gry **unikalny namespace**, różny także od Preview. Gra odczytuje i zapisuje wyłącznie własne klucze `<namespace>:leader` i `<namespace>:snapshot` oraz korzysta z własnych kanałów `<namespace>:in` i `<namespace>:out`. Nie skanuje bazy, nie wykonuje globalnego czyszczenia ani nie zmienia konfiguracji Redis. Prefiksy rozdzielają dane i komunikaty; pamięć, operacje, połączenia i transfer pozostają wspólne dla wszystkich projektów tej bazy. Każda instancja serwera gry otwiera dwa połączenia Redis.
 
 ## 3. Wdróż i dołącz
 
@@ -90,6 +93,8 @@ Hobby jest przeznaczony do osobistego użytku niekomercyjnego i ma własne limit
 ## Zapis i kopie świata
 
 Gra zapisuje wspólny świat w kluczu Redis `<WORLD_NAMESPACE>:snapshot`. Aktualizacja plików gry z zachowaniem tej samej bazy i namespace korzysta z istniejącego zapisu.
+
+Własny zapis gry ma domyślny limit **6 MiB po kompresji**. `WORLD_REDIS_MAX_SNAPSHOT_BYTES` przyjmuje całkowitą liczbę bajtów od `1048576` do `12582912` (1–12 MiB); inne wartości zatrzymują uruchomienie serwera. Obowiązuje także limit 64 MiB JSON po rozpakowaniu, jednakowy przy zapisie i odczycie. Przed przekroczeniem limitu gra zatrzymuje sesje tego świata, odrzuca niepotwierdzone zmiany i zachowuje ostatni poprawny zapis. Nie przycina ekwipunków ani danych świata i nie usuwa danych innych projektów. Administrator powinien sprawdzić wspólny budżet pamięci i kopię zapisu przed zmianą limitu lub ponownym wdrożeniem. Ten limit wyznacza budżet tylko dla zawartości własnego snapshotu — nie gwarantuje osobnego przydziału pamięci czy transferu we współdzielonej bazie.
 
 **Redis Cloud Free nie zapewnia zapisu danych na dysku ani replikacji.** Bieżący świat może przetrwać restart funkcji Vercela, ale awaria lub usunięcie bazy może go utracić. Wynika to z ograniczeń [trwałości danych](https://redis.io/docs/latest/operate/rc/databases/configuration/data-persistence/) i [replikacji](https://redis.io/docs/latest/operate/rc/databases/configuration/high-availability/) bezpłatnego planu. Projekt nie dodaje automatycznej kopii zewnętrznej.
 

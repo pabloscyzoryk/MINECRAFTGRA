@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import type { World } from "./world";
 import { DRAGON_MAX_HEALTH, DRAGON_ENRAGED_HEALTH } from "./dragon-balance";
+import { clearDamagePath } from "./player-physics";
+export type MobObserver = Pick<THREE.Ray, "origin" | "direction">;
 export type MobKind =
   | "sheep"
   | "pig"
@@ -72,6 +74,15 @@ export function cube(
 export class Mob {
   group = new THREE.Group();
   legs: THREE.Object3D[] = [];
+  arms: THREE.Object3D[] = [];
+  elbows: THREE.Group[] = [];
+  hands: THREE.Group[] = [];
+  tendrils: THREE.Group[] = [];
+  jaw: THREE.Object3D | null = null;
+  bow: THREE.Group | null = null;
+  bowString: THREE.Object3D | null = null;
+  bowStrings: THREE.Mesh[] = [];
+  bowArrow: THREE.Group | null = null;
   eyes: THREE.Mesh[] = [];
   head = new THREE.Group();
   tails: THREE.Object3D[] = [];
@@ -80,6 +91,7 @@ export class Mob {
     material: THREE.MeshStandardMaterial;
     emissive: THREE.Color;
     intensity: number;
+    opacity: number;
   }[] = [];
   baseScale = new THREE.Vector3(1, 1, 1);
   elapsed = Math.random() * 20;
@@ -95,11 +107,30 @@ export class Mob {
   attackCooldown = 0;
   heading = Math.random() * 6.28;
   dead = false;
-  hurt = 0;
+  /** Endermen remain neutral until provoked; the server persists the remaining anger. */
+  anger = 0;
+  eyeContact = 0;
+  /** Multiplayer provocation belongs to one player, never whichever bystander is closest. */
+  angerTarget = "";
+  private hurtTime = 0;
+  get hurt() {
+    return this.hurtTime;
+  }
+  set hurt(value: number) {
+    const time = Number.isFinite(value) ? Math.max(0, value) : 0;
+    if (time > this.hurtTime && this.kind === "enderman" && !this.dead) this.anger = 30;
+    this.hurtTime = time;
+  }
   fuse = 0;
   size = 0.65;
   speed = 1.1;
   flying = false;
+  private disposed = false;
+  private gazeRay = new THREE.Ray();
+  private gazeInverse = new THREE.Matrix4();
+  private gazeBox = new THREE.Box3();
+  private gazePoint = new THREE.Vector3();
+  private gazeCenter = new THREE.Vector3();
   constructor(
     public kind: MobKind,
     x: number,
@@ -203,14 +234,27 @@ export class Mob {
     } else if (k === "ghast") {
       cube(g, "#d7d3d5", 0, 1, 0, 2.4, 2.4, 2.4);
       for (let x = -1; x <= 1; x++)
-        for (let z = -1; z <= 1; z++)
-          this.legs.push(cube(g, "#b9b0b9", x * 0.7, -0.8, z * 0.7, 0.3, 1.5, 0.3));
+        for (let z = -1; z <= 1; z++) {
+          const root = new THREE.Group(),
+            end = new THREE.Group();
+          root.position.set(x * 0.7, -0.12, z * 0.7);
+          cube(root, "#c5bdc8", 0, -0.35, 0, 0.29, 0.72, 0.29);
+          end.position.y = -0.69;
+          cube(end, "#aaa0b0", 0, -0.32, 0, 0.23, 0.67 + ((x + z + 3) % 3) * 0.09, 0.23);
+          root.add(end);
+          g.add(root);
+          this.legs.push(root);
+          this.tendrils.push(end);
+        }
       cube(g, "#542f40", -0.58, 1.3, -1.22, 0.45, 0.17, 0.05);
       cube(g, "#542f40", 0.58, 1.3, -1.22, 0.45, 0.17, 0.05);
-      cube(g, "#542f40", 0, 0.58, -1.22, 0.5, 0.5, 0.05);
+      this.jaw = cube(g, "#542f40", 0, 0.58, -1.22, 0.5, 0.5, 0.05);
       this.size = 1.8;
     } else if (k === "slime") {
-      cube(g, "#80b76d", 0, 0.65, 0, 1.3, 1.3, 1.3);
+      const shell = cube(g, "#92cb78", 0, 0.65, 0, 1.3, 1.3, 1.3);
+      shell.userData.opacity = 0.38;
+      shell.castShadow = false;
+      cube(g, "#5f9b4e", 0, 0.6, 0.02, 0.87, 0.81, 0.87);
       eye(-0.28, 0.86, -0.66);
       eye(0.28, 0.86, -0.66);
       cube(g, "#263c27", 0, 0.48, -0.66, 0.36, 0.12, 0.02);
@@ -218,14 +262,15 @@ export class Mob {
       cube(g, "#dcb644", 0, 1.5, 0, 0.7, 0.6, 0.6, true);
       eye(-0.18, 1.65, -0.31);
       eye(0.18, 1.65, -0.31);
-      for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * Math.PI * 2;
+      for (let i = 0; i < 12; i++) {
+        const a = ((i % 4) * Math.PI) / 2,
+          ring = Math.floor(i / 4);
         this.legs.push(
           cube(
             g,
             "#e6ac3b",
             Math.cos(a) * 0.6,
-            0.8 + (i % 2) * 0.5,
+            0.35 + ring * 0.48,
             Math.sin(a) * 0.6,
             0.16,
             0.7,
@@ -255,30 +300,41 @@ export class Mob {
               : "#b99a81",
         shirt = k === "zombie" ? "#538d95" : k === "piglin" ? "#805e43" : skin,
         legs = k === "zombie" ? "#615b8a" : skin;
-      cube(g, shirt, 0, 1.23, 0, end ? 0.45 : 0.64, end ? 1.0 : 0.75, 0.34);
-      cube(g, skin, 0, end ? 2.3 : 1.92, 0, 0.64, 0.64, 0.58);
+      if (k === "skeleton") {
+        cube(g, skin, 0, 1.23, 0.08, 0.13, 0.76, 0.13);
+        for (const y of [1.03, 1.23, 1.43]) cube(g, skin, 0, y, 0, 0.57, 0.09, 0.31);
+        cube(g, skin, 0, 0.86, 0, 0.45, 0.15, 0.27);
+      } else cube(g, shirt, 0, end ? 1.76 : 1.23, 0, end ? 0.45 : 0.64, end ? 1.1 : 0.75, 0.34);
+      cube(g, skin, 0, end ? 2.64 : 1.92, 0, 0.64, 0.64, 0.58);
       for (const x of [-0.18, 0.18])
         this.legs.push(
-          cube(g, legs, x, end ? 0.64 : 0.45, 0, end ? 0.13 : 0.24, end ? 1.3 : 0.9, 0.25),
+          cube(
+            g,
+            legs,
+            x,
+            end ? 0.77 : 0.45,
+            0,
+            end ? 0.13 : k === "skeleton" ? 0.13 : 0.24,
+            end ? 1.54 : 0.9,
+            0.25,
+          ),
         );
       for (const x of [-0.47, 0.47]) {
         const arm = cube(
           g,
           skin,
           x,
-          end ? 1.05 : 1.19,
-          k === "zombie" ? -0.32 : 0,
+          end ? 1.55 : 1.19,
+          0,
           end ? 0.11 : 0.2,
-          end ? 1.4 : 0.78,
+          end ? 1.7 : 0.78,
           0.23,
         );
-        if (k === "zombie") arm.rotation.x = -1.35;
         this.legs.push(arm);
       }
-      eye(-0.17, end ? 2.37 : 2, -0.3, end ? "#bf77ff" : "#292d26");
-      eye(0.17, end ? 2.37 : 2, -0.3, end ? "#bf77ff" : "#292d26");
+      eye(-0.17, end ? 2.71 : 2, -0.3, end ? "#bf77ff" : "#292d26");
+      eye(0.17, end ? 2.71 : 2, -0.3, end ? "#bf77ff" : "#292d26");
       if (k === "piglin") cube(g, "#d1b192", 0, 1.8, -0.36, 0.31, 0.2, 0.19);
-      if (k === "skeleton") cube(g, "#6f5234", -0.6, 1.2, -0.25, 0.08, 0.8, 0.12);
     }
   }
   rig() {
@@ -290,7 +346,7 @@ export class Mob {
     if (animal || humanoid || k === "frog" || k === "bee") {
       this.head.position.set(
         0,
-        animal ? 0.9 : k === "frog" ? 0.48 : k === "bee" ? 0.5 : k === "enderman" ? 2.12 : 1.65,
+        animal ? 0.9 : k === "frog" ? 0.48 : k === "bee" ? 0.5 : k === "enderman" ? 2.42 : 1.65,
         animal ? -0.55 : k === "frog" ? -0.3 : k === "bee" ? -0.45 : 0,
       );
       // Moving meshes removes them from g.children, so iterate a stable copy.
@@ -302,7 +358,7 @@ export class Mob {
             ? o.position.y > 0.4 && o.position.z < -0.15
             : k === "bee"
               ? o.position.z < -0.4
-              : o.position.y > (k === "enderman" ? 2 : 1.58);
+              : o.position.y > (k === "enderman" ? 2.3 : 1.58);
         if (isHead) {
           o.position.sub(this.head.position);
           this.head.add(o);
@@ -330,17 +386,369 @@ export class Mob {
         pivot.add(l);
         return pivot;
       });
+    this.addDetails();
+    const materials = new Map<THREE.Material, THREE.MeshStandardMaterial>();
     g.traverse((o) => {
       if (o instanceof THREE.Mesh) {
-        const material = (o.material as THREE.MeshStandardMaterial).clone();
+        const source = o.material as THREE.MeshStandardMaterial;
+        let material = materials.get(source);
+        if (!material) {
+          material = source.clone();
+          if (typeof o.userData.opacity === "number") {
+            material.transparent = true;
+            material.opacity = o.userData.opacity;
+            material.depthWrite = false;
+          }
+          materials.set(source, material);
+          this.skinMaterials.push({
+            material,
+            emissive: material.emissive.clone(),
+            intensity: material.emissiveIntensity,
+            opacity: material.opacity,
+          });
+        }
         o.material = material;
-        this.skinMaterials.push({
-          material,
-          emissive: material.emissive.clone(),
-          intensity: material.emissiveIntensity,
-        });
       }
     });
+  }
+  /** Small surface details share cube geometry and one instanced draw per color and joint. */
+  private patches(parent: THREE.Object3D, color: string, boxes: number[][], glow = false) {
+    const mesh = new THREE.InstancedMesh(cubeGeo, mat(color, glow), boxes.length);
+    const transform = new THREE.Object3D();
+    boxes.forEach(([x, y, z, w, h, d], i) => {
+      transform.position.set(x, y, z);
+      transform.scale.set(w, h, d);
+      transform.updateMatrix();
+      mesh.setMatrixAt(i, transform.matrix);
+    });
+    mesh.name = "surface-details";
+    mesh.castShadow = false;
+    mesh.receiveShadow = true;
+    mesh.matrixAutoUpdate = false;
+    parent.add(mesh);
+    return mesh;
+  }
+  private addDetails() {
+    const k = this.kind,
+      g = this.group,
+      head = this.head;
+    const face = (
+      color: string,
+      x: number,
+      y: number,
+      z: number,
+      w: number,
+      h: number,
+      d: number,
+      glow = false,
+    ) =>
+      cube(
+        head,
+        color,
+        x - head.position.x,
+        y - head.position.y,
+        z - head.position.z,
+        w,
+        h,
+        d,
+        glow,
+      );
+    if (["zombie", "skeleton", "piglin", "enderman"].includes(k)) {
+      this.arms = this.legs.slice(2);
+      for (const [i, arm] of this.arms.entries()) {
+        const original = arm.children[0] as THREE.Mesh;
+        const color = "#" + (original.material as THREE.MeshStandardMaterial).color.getHexString();
+        const length = original.scale.y,
+          width = k === "skeleton" ? 0.12 : original.scale.x;
+        arm.remove(original);
+        cube(arm, color, 0, -length * 0.23, 0, width, length * 0.5, 0.2);
+        const elbow = new THREE.Group(),
+          hand = new THREE.Group();
+        elbow.name = "elbow";
+        elbow.position.y = -length * 0.46;
+        cube(elbow, color, 0, -length * 0.23, 0, width, length * 0.5, 0.2);
+        hand.name = "hand";
+        hand.position.y = -length * 0.49;
+        cube(hand, color, 0, -0.015, -0.015, width * 1.18, 0.13, 0.23);
+        const fingers = k === "enderman" ? 0.21 : 0.09;
+        this.patches(
+          hand,
+          color,
+          [-1, 0, 1].map((n) => [
+            n * width * 0.32,
+            -fingers * 0.5 - 0.06,
+            -0.045,
+            width * 0.22,
+            fingers,
+            0.08,
+          ]),
+        );
+        elbow.add(hand);
+        arm.add(elbow);
+        this.elbows.push(elbow);
+        this.hands.push(hand);
+        if (k === "zombie")
+          cube(arm, "#538d95", 0, -length * 0.1, 0, width * 1.11, length * 0.27, 0.225);
+        if (k === "piglin")
+          cube(arm, "#6b4935", 0, -length * 0.09, 0, width * 1.3, length * 0.27, 0.25);
+        if (k === "skeleton") cube(elbow, "#99968d", 0, 0, 0, 0.16, 0.13, 0.16);
+        arm.name = i ? "right-arm" : "left-arm";
+      }
+    }
+    if (k === "zombie") {
+      face("#41583b", 0, 2.16, -0.295, 0.64, 0.15, 0.025);
+      face("#394732", 0.06, 1.8, -0.302, 0.32, 0.07, 0.025);
+      face("#92a77a", -0.09, 1.77, -0.318, 0.09, 0.045, 0.025);
+      this.patches(head, "#526b43", [
+        [0.23, 0.39, -0.306, 0.12, 0.15, 0.026],
+        [-0.24, 0.15, -0.306, 0.1, 0.09, 0.027],
+      ]);
+      this.patches(g, "#698255", [
+        [-0.2, 0.89, -0.18, 0.14, 0.2, 0.025],
+        [0.13, 0.94, -0.18, 0.13, 0.1, 0.025],
+        [0.322, 1.26, 0.02, 0.025, 0.19, 0.15],
+      ]);
+      this.patches(g, "#334e56", [
+        [0, 1.48, -0.179, 0.18, 0.12, 0.024],
+        [-0.19, 1.2, -0.179, 0.13, 0.08, 0.024],
+      ]);
+    } else if (k === "skeleton") {
+      for (const side of [-1, 1]) face("#343b38", side * 0.17, 2, -0.301, 0.21, 0.2, 0.027);
+      face("#52574f", 0, 1.87, -0.306, 0.085, 0.12, 0.035);
+      this.jaw = face("#b7b2a4", 0, 1.62, -0.015, 0.53, 0.13, 0.55);
+      this.jaw.userData.baseY = this.jaw.position.y;
+      this.patches(
+        head,
+        "#777b70",
+        [-2, -1, 0, 1, 2].map((x) => [x * 0.087, 0.08, -0.309, 0.038, 0.095, 0.025]),
+      );
+      const bow = (this.bow = new THREE.Group());
+      bow.name = "bone-bow";
+      this.hands[0].add(bow);
+      cube(bow, "#745137", 0, 0, 0, 0.095, 0.5, 0.095);
+      for (const side of [-1, 1]) {
+        const limb = cube(bow, "#a57a49", 0, side * 0.34, -0.09, 0.075, 0.3, 0.07);
+        limb.rotation.x = side * 0.5;
+        cube(bow, "#594331", 0, side * 0.47, -0.17, 0.065, 0.12, 0.065);
+      }
+      this.bowString = new THREE.Group();
+      this.bowString.name = "string-nock";
+      bow.add(this.bowString);
+      for (let i = 0; i < 2; i++) {
+        const string = cube(bow, "#dfcf9f", 0, 0, 0, 0.014, 0.47, 0.014);
+        string.castShadow = false;
+        this.bowStrings.push(string);
+      }
+      this.bowArrow = new THREE.Group();
+      bow.add(this.bowArrow);
+      cube(this.bowArrow, "#b8a787", 0, 0, -0.36, 0.04, 0.04, 0.72);
+      cube(this.bowArrow, "#b7beb8", 0, 0, -0.76, 0.09, 0.08, 0.17);
+    } else if (k === "enderman") {
+      for (const eye of this.eyes) {
+        eye.scale.x = 0.245;
+        eye.scale.y = 0.06;
+        eye.userData.openHeight = 0.06;
+      }
+      face("#e5bbff", -0.17, 2.71, -0.313, 0.055, 0.035, 0.026, true);
+      face("#e5bbff", 0.17, 2.71, -0.313, 0.055, 0.035, 0.026, true);
+      face("#16161e", 0, 2.5, -0.303, 0.36, 0.045, 0.02);
+      this.patches(g, "#383140", [
+        [0.23, 1.83, 0, 0.018, 0.65, 0.15],
+        [-0.23, 1.62, 0, 0.018, 0.45, 0.14],
+        [0, 1.42, -0.178, 0.16, 0.12, 0.023],
+      ]);
+    } else if (k === "piglin") {
+      for (const side of [-1, 1]) {
+        face("#b99077", side * 0.4, 2.07, 0, 0.24, 0.25, 0.16);
+        face("#d1a58b", side * 0.43, 2.07, -0.085, 0.13, 0.15, 0.018);
+        face("#f0e1b8", side * 0.2, 1.79, -0.41, 0.075, 0.26, 0.08);
+        face("#775743", side * 0.075, 1.82, -0.46, 0.065, 0.045, 0.02);
+      }
+      this.patches(g, "#46362c", [
+        [0, 0.92, 0, 0.67, 0.13, 0.38],
+        [0.18, 1.2, -0.18, 0.11, 0.5, 0.023],
+      ]);
+      cube(g, "#dfb64e", 0, 0.92, -0.205, 0.19, 0.17, 0.055);
+      const sword = new THREE.Group();
+      sword.name = "golden-cleaver";
+      sword.position.y = 0.08;
+      this.hands[1].add(sword);
+      cube(sword, "#5c402c", 0, -0.09, 0, 0.085, 0.26, 0.085);
+      cube(sword, "#d8ac3a", 0, -0.21, 0, 0.32, 0.075, 0.12);
+      cube(sword, "#ecc85d", 0, -0.48, 0, 0.17, 0.49, 0.065);
+      cube(sword, "#fff0a8", -0.065, -0.48, -0.012, 0.028, 0.49, 0.07);
+      cube(sword, "#f5d987", 0, -0.77, 0, 0.1, 0.09, 0.055);
+    } else if (k === "creeper") {
+      this.patches(g, "#4d723c", [
+        [-0.18, 1.39, -0.25, 0.19, 0.18, 0.027],
+        [0.17, 0.88, -0.25, 0.2, 0.21, 0.027],
+        [0.33, 1.17, 0, 0.025, 0.16, 0.27],
+        [-0.33, 1.05, 0, 0.025, 0.29, 0.17],
+        [0.06, 1.21, 0.25, 0.21, 0.22, 0.027],
+      ]);
+      this.patches(head, "#a3ba74", [
+        [-0.25, 0.47, -0.34, 0.13, 0.16, 0.025],
+        [0.08, 0.54, -0.34, 0.2, 0.1, 0.025],
+        [0.385, 0.19, 0, 0.024, 0.2, 0.18],
+      ]);
+      this.patches(head, "#526c3d", [
+        [0.24, 0.32, -0.34, 0.16, 0.11, 0.025],
+        [-0.18, -0.11, -0.34, 0.11, 0.12, 0.025],
+      ]);
+      for (const leg of this.legs) cube(leg, "#3f6133", 0, -0.19, -0.02, 0.28, 0.14, 0.35);
+    } else if (k === "ghast") {
+      this.patches(g, "#a89daa", [
+        [-0.58, 0.99, -1.226, 0.11, 0.4, 0.023],
+        [0.58, 0.9, -1.226, 0.11, 0.58, 0.023],
+        [-0.81, 1.25, -1.226, 0.12, 0.12, 0.023],
+        [0.81, 1.25, -1.226, 0.12, 0.12, 0.023],
+        [-0.95, 1.92, -1.208, 0.25, 0.12, 0.02],
+        [0.8, -0.03, -1.208, 0.31, 0.17, 0.02],
+      ]);
+      this.patches(g, "#ebe5e5", [
+        [-1.211, 0.7, 0, 0.02, 0.4, 0.6],
+        [1.211, 1.65, -0.6, 0.02, 0.27, 0.45],
+        [0.2, 2.211, 0.3, 0.4, 0.02, 0.7],
+      ]);
+    } else if (k === "blaze") {
+      cube(g, "#f77722", 0, 0.72, 0, 0.35, 0.72, 0.35, true);
+      cube(g, "#fff2a1", 0, 0.83, 0, 0.2, 0.39, 0.2, true);
+      this.patches(g, "#995727", [
+        [-0.22, 1.74, -0.31, 0.21, 0.075, 0.026],
+        [0.22, 1.74, -0.31, 0.21, 0.075, 0.026],
+        [0, 1.37, -0.31, 0.35, 0.075, 0.024],
+      ]);
+      for (const rod of this.legs) cube(rod, "#ffdd77", 0, 0, 0, 1.13, 0.18, 1.13, true);
+    } else if (k === "slime") {
+      this.patches(g, "#acd98f", [
+        [-0.32, 1.08, -0.667, 0.36, 0.075, 0.023],
+        [-0.48, 0.87, -0.667, 0.075, 0.27, 0.023],
+        [0.661, 0.98, -0.26, 0.022, 0.15, 0.3],
+      ]);
+      this.patches(g, "#79bc63", [
+        [0.22, 0.85, 0.17, 0.19, 0.2, 0.2],
+        [-0.2, 0.4, 0.28, 0.2, 0.15, 0.16],
+      ]);
+    } else if (k === "pig") {
+      for (const side of [-1, 1]) {
+        face("#a95f65", side * 0.075, 0.98, -1.103, 0.055, 0.055, 0.026);
+        face("#d99590", side * 0.31, 1.35, -0.71, 0.2, 0.2, 0.13);
+      }
+    } else if (k === "cow") {
+      face("#b9968b", 0, 0.92, -1.013, 0.48, 0.22, 0.085);
+      for (const side of [-1, 1]) face("#4d3932", side * 0.12, 0.92, -1.063, 0.075, 0.055, 0.018);
+    }
+  }
+  /** The mob faces local -Z; positive X rotation carries a hanging hand forward. */
+  poseArms(progress: number) {
+    const idle = this.kind === "zombie" ? 1.1 : 0.035;
+    const smooth = (t: number) => {
+      const p = THREE.MathUtils.clamp(t, 0, 1);
+      return p * p * (3 - 2 * p);
+    };
+    const contact = 0.31 / 0.65;
+    const angle =
+      progress < 0
+        ? idle
+        : progress < 0.23
+          ? THREE.MathUtils.lerp(idle, 2.6, smooth(progress / 0.23))
+          : progress < contact
+            ? THREE.MathUtils.lerp(2.6, 1.15, smooth((progress - 0.23) / (contact - 0.23)))
+            : THREE.MathUtils.lerp(1.15, idle, smooth((progress - contact) / (1 - contact)));
+    for (const [i, arm] of this.arms.entries()) {
+      arm.rotation.set(
+        angle + (progress < 0 ? Math.sin(this.gait + i * Math.PI) * 0.45 * this.walkBlend : 0),
+        0,
+        (i ? 1 : -1) * 0.055,
+        "YXZ",
+      );
+      this.elbows[i].rotation.set(
+        progress >= 0 && progress < contact
+          ? Math.sin((progress / contact) * Math.PI) * 0.38
+          : 0.04,
+        0,
+        0,
+      );
+    }
+    if (this.bow) {
+      const ranged = this.rangedAttack && progress >= 0 && progress < 1;
+      if (ranged) {
+        const blend =
+          progress < contact
+            ? smooth(progress / 0.15)
+            : 1 - smooth((progress - contact) / (1 - contact));
+        const left = this.arms[0],
+          right = this.arms[1];
+        left.rotation.set(
+          THREE.MathUtils.lerp(idle, Math.PI / 2, blend),
+          -0.55 * blend,
+          -0.055 * (1 - blend),
+          "YXZ",
+        );
+        this.elbows[0].rotation.set(0.04 * (1 - blend), 0, 0);
+        // Solve the two arm segments in the horizontal draw plane. The hand meets
+        // the nock at shoulder height instead of dipping below the arrow.
+        const draw =
+          -0.185 + 0.45 * (progress < contact ? Math.sin(((progress / contact) * Math.PI) / 2) : 1);
+        const target = new THREE.Vector3(0, this.elbows[0].position.y + this.hands[0].position.y, 0)
+          .applyQuaternion(left.quaternion)
+          .add(left.position)
+          .add(new THREE.Vector3(0, 0, draw))
+          .sub(right.position);
+        const upper = -this.elbows[1].position.y,
+          lower = -this.hands[1].position.y;
+        const distance = THREE.MathUtils.clamp(
+          Math.hypot(target.x, target.z),
+          Math.abs(upper - lower) + 0.00001,
+          upper + lower - 0.00001,
+        );
+        const heading = Math.atan2(-target.x, -target.z);
+        const shoulder = Math.acos(
+          THREE.MathUtils.clamp(
+            (upper * upper + distance * distance - lower * lower) / (2 * upper * distance),
+            -1,
+            1,
+          ),
+        );
+        const bend =
+          Math.PI -
+          Math.acos(
+            THREE.MathUtils.clamp(
+              (upper * upper + lower * lower - distance * distance) / (2 * upper * lower),
+              -1,
+              1,
+            ),
+          );
+        right.rotation.set(
+          THREE.MathUtils.lerp(idle, Math.PI / 2, blend),
+          (heading + shoulder) * blend,
+          0.055 * (1 - blend),
+          "YXZ",
+        );
+        this.elbows[1].rotation.set(0.04 * (1 - blend), 0, bend * blend);
+      }
+      this.bow.quaternion
+        .copy(this.arms[0].quaternion)
+        .multiply(this.elbows[0].quaternion)
+        .invert();
+      const pull =
+        this.rangedAttack && progress >= 0 && progress < contact
+          ? Math.sin(((progress / contact) * Math.PI) / 2)
+          : 0;
+      const drawPoint = new THREE.Vector3(0, 0, -0.185 + pull * 0.45);
+      if (this.bowString) this.bowString.position.copy(drawPoint);
+      this.bowStrings.forEach((string, i) => {
+        const tip = new THREE.Vector3(0, (i ? 1 : -1) * 0.47, -0.17);
+        const segment = drawPoint.clone().sub(tip);
+        string.position.copy(tip).add(drawPoint).multiplyScalar(0.5);
+        string.scale.set(0.014, segment.length(), 0.014);
+        string.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), segment.normalize());
+      });
+      if (this.bowArrow) {
+        this.bowArrow.position.copy(drawPoint);
+        this.bowArrow.visible = !ranged || progress < contact;
+      }
+    }
   }
   die() {
     if (this.dead) return;
@@ -348,8 +756,51 @@ export class Mob {
     this.deathTime = 0;
     this.state = "dead";
     this.attackClock = 0;
+    this.anger = 0;
+    this.eyeContact = 0;
+    this.angerTarget = "";
+  }
+  /** A narrow band across the actual animated eyes; aiming at its body never provokes it. */
+  looksIntoEyes(observer: MobObserver | undefined, world: World) {
+    if (!observer || this.kind !== "enderman" || this.dead || this.eyes.length < 2) return false;
+    const { origin, direction } = observer;
+    if (
+      ![origin.x, origin.y, origin.z, direction.x, direction.y, direction.z].every(
+        Number.isFinite,
+      ) ||
+      direction.lengthSq() < 1e-8
+    )
+      return false;
+    this.head.updateWorldMatrix(true, false);
+    this.gazeCenter.copy(this.eyes[0].position).add(this.eyes[1].position).multiplyScalar(0.5);
+    this.gazePoint.copy(this.gazeCenter).applyMatrix4(this.head.matrixWorld);
+    if (origin.distanceToSquared(this.gazePoint) > 24 * 24) return false;
+    this.gazeInverse.copy(this.head.matrixWorld).invert();
+    this.gazeRay.origin.copy(origin);
+    this.gazeRay.direction.copy(direction);
+    this.gazeRay.applyMatrix4(this.gazeInverse);
+    // The back of the head occludes its eyes, just as a wall does.
+    if (this.gazeRay.origin.z >= this.gazeCenter.z) return false;
+    this.gazeBox.min.set(
+      this.gazeCenter.x - 0.29,
+      this.gazeCenter.y - 0.08,
+      this.gazeCenter.z - 0.045,
+    );
+    this.gazeBox.max.set(
+      this.gazeCenter.x + 0.29,
+      this.gazeCenter.y + 0.08,
+      this.gazeCenter.z + 0.045,
+    );
+    if (!this.gazeRay.intersectBox(this.gazeBox, this.gazePoint)) return false;
+    this.gazePoint.applyMatrix4(this.head.matrixWorld);
+    return clearDamagePath(origin, this.gazePoint, (x, y, z) => world.solid(x, y, z));
   }
   dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.group.traverse((o) => {
+      if (o instanceof THREE.InstancedMesh) o.dispose();
+    });
     for (const m of this.skinMaterials) m.material.dispose();
     this.skinMaterials = [];
   }
@@ -361,6 +812,7 @@ export class Mob {
     damage: (n: number) => void,
     shoot: (p: THREE.Vector3) => void,
     explode: (p: THREE.Vector3) => void,
+    observer?: MobObserver,
   ) {
     this.elapsed += dt;
     const t = this.elapsed,
@@ -373,7 +825,7 @@ export class Mob {
       this.group.position.y -= dt * 0.12;
       for (const m of this.skinMaterials) {
         m.material.transparent = true;
-        m.material.opacity = Math.max(0, 1 - (this.deathTime - 0.6) / 0.65);
+        m.material.opacity = m.opacity * Math.max(0, 1 - (this.deathTime - 0.6) / 0.65);
       }
       if (this.deathTime > 1.3) this.group.visible = false;
       return;
@@ -381,8 +833,19 @@ export class Mob {
     this.timer -= dt;
     this.attackCooldown -= dt;
     this.hurt = Math.max(0, this.hurt - dt);
+    this.anger = Math.max(0, this.anger - dt);
+    if (k === "enderman" && dt > 0) {
+      const watching = this.looksIntoEyes(observer, world);
+      this.eyeContact = watching ? Math.min(0.25, this.eyeContact + Math.max(0, dt)) : 0;
+      if (this.eyeContact >= 0.25) this.anger = 30;
+    }
+    // Old saves can contain a pending attack without provocation; never land that stale hit.
+    if (k === "enderman" && this.anger <= 0) {
+      this.attackClock = 0;
+      if (this.eyeContact <= 0) this.angerTarget = "";
+    }
     const dist = pos.distanceTo(player),
-      alert = this.hostile && dist < 27,
+      alert = this.hostile && (k !== "enderman" || this.anger > 0) && dist < 27,
       ranged = ["skeleton", "ghast", "blaze"].includes(k);
     if (alert) this.heading = Math.atan2(player.x - pos.x, player.z - pos.z);
     else if (this.timer <= 0) {
@@ -496,31 +959,43 @@ export class Mob {
       graze ? -0.7 + Math.sin(t * 6) * 0.09 : alert ? -0.08 : Math.sin(t * 1.6) * 0.045,
       1 - Math.exp(-dt * 5),
     );
-    const blink = t % 4.8 > 4.64 ? 0.13 : 1;
-    for (const e of this.eyes) e.scale.y = 0.09 * blink;
+    const blink = k !== "enderman" && t % 4.8 > 4.64 ? 0.13 : 1;
+    for (const e of this.eyes) e.scale.y = (e.userData.openHeight ?? 0.09) * blink;
     this.legs.forEach((l, i) => {
       if (k === "ghast") {
         l.rotation.x = Math.sin(t * 2.1 + i * 0.6) * 0.27;
         l.rotation.z = Math.cos(t * 1.7 + i) * 0.17;
       } else if (k === "blaze") {
-        const a = t * (i % 2 ? 1.2 : -0.9) + (i * Math.PI) / 4;
+        const ring = Math.floor(i / 4),
+          radius = 0.52 + ring * 0.1 + this.attackClock * 0.32;
+        const a = t * (ring % 2 ? 1.2 : -0.9) + ((i % 4) * Math.PI) / 2 + ring * 0.4;
         l.position.set(
-          Math.cos(a) * (0.63 + this.attackClock * 0.45),
-          0.8 + (i % 2) * 0.5 + Math.sin(t * 2 + i) * 0.15,
-          Math.sin(a) * 0.63,
+          Math.cos(a) * radius,
+          0.35 + ring * 0.48 + Math.sin(t * 2 + i) * 0.1,
+          Math.sin(a) * radius,
         );
         l.rotation.z = Math.sin(t + i) * 0.25;
       } else {
         l.rotation.x =
           Math.sin(this.gait + (i === 0 || i === 3 ? 0 : Math.PI)) * 0.65 * this.walkBlend;
-        if (["zombie", "skeleton", "piglin", "enderman"].includes(k) && i >= 2) {
-          l.rotation.x += k === "zombie" ? -1.2 : 0;
-          if (this.attackClock > 0)
-            l.rotation.x -= Math.sin(((0.65 - this.attackClock) / 0.65) * Math.PI) * 1.8;
-          l.rotation.z = (i === 2 ? -1 : 1) * (0.04 + Math.sin(t * 2) * 0.025);
-        }
       }
     });
+    const attackProgress =
+      this.attackClock > 0 ? THREE.MathUtils.clamp((0.65 - this.attackClock) / 0.65, 0, 1) : -1;
+    this.poseArms(attackProgress);
+    this.tendrils.forEach((tip, i) => {
+      tip.rotation.x = Math.sin(t * 2.1 + i * 0.6 - 0.65) * 0.31;
+      tip.rotation.z = Math.cos(t * 1.7 + i - 0.4) * 0.2;
+    });
+    if (this.jaw) {
+      if (k === "ghast")
+        this.jaw.scale.y =
+          0.5 + (attackProgress >= 0 ? Math.sin(attackProgress * Math.PI) * 0.65 : 0);
+      else
+        this.jaw.position.y =
+          this.jaw.userData.baseY -
+          (attackProgress >= 0 ? Math.sin(attackProgress * Math.PI) * 0.09 : 0);
+    }
     this.tails.forEach((tail, i) => {
       tail.rotation.y = Math.sin(t * (k === "fox" ? 3 : 5) + i) * 0.38;
       tail.rotation.x = (graze ? -0.1 : 0.15) + Math.sin(t * 2) * 0.12;

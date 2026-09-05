@@ -31,10 +31,23 @@ export const RELEASE =
 export const PERSIST =
   "if redis.call('GET',KEYS[1])==ARGV[1] then redis.call('SET',KEYS[2],ARGV[2]);return 1 else return 0 end";
 export const REDIS_CODEC_PREFIX = "MINECRAFTGRA:GZIP1:";
+export const DEFAULT_REDIS_SNAPSHOT_BYTES = 6 * 1024 * 1024;
+export const MAX_REDIS_JSON_BYTES = 64 * 1024 * 1024;
+export const STORAGE_LIMIT_MESSAGE =
+  "Świat osiągnął bezpieczny limit zapisu. Sesja została zatrzymana; ostatni potwierdzony zapis jest zachowany. Administrator musi sprawdzić budżet pamięci świata.";
+export function redisSnapshotByteLimit(value: unknown = undefined) {
+  if (value === undefined || value === "") return DEFAULT_REDIS_SNAPSHOT_BYTES;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1024 * 1024 || n > 12 * 1024 * 1024)
+    throw Error("WORLD_REDIS_MAX_SNAPSHOT_BYTES must be an integer from 1048576 to 12582912");
+  return n;
+}
 
 /** Redis transport only: browser messages and local save files remain ordinary JSON. */
 export function encodeRedis(value: unknown, forceCompression = false): string {
-  const json = JSON.stringify(value);
+  return encodeRedisJson(JSON.stringify(value), forceCompression);
+}
+function encodeRedisJson(json: string, forceCompression: boolean): string {
   if (!forceCompression && Buffer.byteLength(json) <= 1024) return json;
   const encoded = REDIS_CODEC_PREFIX + gzipSync(json, { level: 1 }).toString("base64");
   return forceCompression || encoded.length < Buffer.byteLength(json) ? encoded : json;
@@ -43,9 +56,11 @@ export function encodeRedis(value: unknown, forceCompression = false): string {
 export function decodeRedis(value: string): any {
   const json = value.startsWith(REDIS_CODEC_PREFIX)
     ? gunzipSync(Buffer.from(value.slice(REDIS_CODEC_PREFIX.length), "base64"), {
-        maxOutputLength: 64 * 1024 * 1024,
+        maxOutputLength: MAX_REDIS_JSON_BYTES,
       }).toString("utf8")
     : value;
+  if (Buffer.byteLength(json) > MAX_REDIS_JSON_BYTES)
+    throw RangeError("Redis JSON exceeds the decompressed size limit");
   return JSON.parse(json);
 }
 
@@ -96,6 +111,8 @@ export class Gateway {
   busy = false;
   starting: Promise<void> | null = null;
   closed = false;
+  storageBlocked = false;
+  maxSnapshotBytes: number;
   local: boolean;
   namespace: string;
   out: string;
@@ -106,9 +123,18 @@ export class Gateway {
   cameraPublishing = false;
   cameraForwarding = false;
   constructor(
-    public options: { store?: Store; local?: boolean; namespace?: string; file?: string } = {},
+    public options: {
+      store?: Store;
+      local?: boolean;
+      namespace?: string;
+      file?: string;
+      maxSnapshotBytes?: number;
+    } = {},
   ) {
     this.local = options.local ?? !process.env.VERCEL;
+    this.maxSnapshotBytes = redisSnapshotByteLimit(
+      options.maxSnapshotBytes ?? process.env.WORLD_REDIS_MAX_SNAPSHOT_BYTES,
+    );
     this.namespace = options.namespace ?? process.env.WORLD_NAMESPACE ?? "minecraftgra-v1";
     if (!/^[a-zA-Z0-9_-]{1,80}$/.test(this.namespace)) throw Error("Invalid WORLD_NAMESPACE");
     this.out = this.namespace + ":out";
@@ -146,6 +172,7 @@ export class Gateway {
         } catch {}
       this.leaseUntil = Infinity;
     }
+    if (this.storageBlocked) return;
     this.lastTick = Date.now();
     this.timer = setInterval(() => void this.step(), 50);
     await this.step();
@@ -154,7 +181,7 @@ export class Gateway {
     return new Room((id, data) => this.broadcast({ type: "delivery", id, data }));
   }
   async step() {
-    if (this.busy || this.closed) return;
+    if (this.busy || this.closed || this.storageBlocked) return;
     this.busy = true;
     try {
       const now = Date.now();
@@ -179,6 +206,13 @@ export class Gateway {
           this.broadcast({ type: "delivery", id: "*", data: { type: "resync" } });
         }
       }
+      if (this.storageBlocked) {
+        this.room = null;
+        this.leaseUntil = 0;
+        if (this.store)
+          await this.store.eval(RELEASE, { keys: [this.lease], arguments: [this.node] });
+        return;
+      }
       if (this.room && now < this.leaseUntil) {
         const dt = Math.min(0.1, Math.max(0.001, (now - this.lastTick) / 1000));
         this.room.tick(dt);
@@ -202,20 +236,47 @@ export class Gateway {
     }
   }
   async persist() {
-    if (!this.room) return false;
+    if (!this.room || this.storageBlocked) return false;
     const data = this.room.save();
-    if (this.store)
-      return (
-        (await this.store.eval(PERSIST, {
-          keys: [this.lease, this.snapshot],
-          arguments: [this.node, encodeRedis(data, true)],
-        })) === 1
-      );
+    if (this.store) {
+      const json = JSON.stringify(data);
+      // A small gzip stream can expand beyond the reader's limit; never acknowledge that save.
+      const encoded =
+        Buffer.byteLength(json) > MAX_REDIS_JSON_BYTES ? null : encodeRedisJson(json, true);
+      if (encoded === null || Buffer.byteLength(encoded) > this.maxSnapshotBytes) {
+        this.suspendStorage();
+        // The control packet reaches only this world's gateways; the last snapshot is untouched.
+        await Promise.allSettled([
+          this.store.publish(this.out, encodeRedis({ type: "storageLimit", id: "*" })),
+          this.store.eval(RELEASE, { keys: [this.lease], arguments: [this.node] }),
+        ]);
+        return false;
+      }
+      const saved = await this.store.eval(PERSIST, {
+        keys: [this.lease, this.snapshot],
+        arguments: [this.node, encoded],
+      });
+      return saved === 1 && !this.storageBlocked;
+    }
     if (this.options.file) await writeFile(this.options.file, JSON.stringify(data), "utf8");
     return true;
   }
+  private suspendStorage() {
+    if (this.storageBlocked) return;
+    this.storageBlocked = true;
+    this.room = null;
+    this.leaseUntil = 0;
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    for (const p of this.peers.values()) {
+      this.send(p.socket, { type: "error", fatal: true, message: STORAGE_LIMIT_MESSAGE });
+      p.socket.close(1013, "World storage limit");
+    }
+  }
   broadcast(packet: Packet) {
+    if (this.storageBlocked) return;
     const publish = () => {
+      if (this.storageBlocked) return;
       const camera =
         packet.type === "delivery" &&
         packet.data?.type === "faceFrame" &&
@@ -246,6 +307,11 @@ export class Gateway {
     } else publish();
   }
   route(packet: Packet) {
+    if (packet.type === "storageLimit") {
+      this.suspendStorage();
+      return;
+    }
+    if (this.storageBlocked) return;
     if (packet.type === "delivery" && packet.data?.type === "frame")
       this.cameraPlayers = Math.max(1, Math.min(16, packet.data.players?.length ?? 1));
     if (packet.type === "connection") {
@@ -293,7 +359,7 @@ export class Gateway {
       }
   }
   forward(packet: Packet) {
-    if (this.closed) return;
+    if (this.closed || this.storageBlocked) return;
     if (!this.store || (this.room && Date.now() < this.leaseUntil)) this.handle(packet);
     else {
       const camera = packet.type === "faceFrame" && packet.data !== null;
@@ -308,6 +374,7 @@ export class Gateway {
     }
   }
   handle(packet: Packet) {
+    if (this.storageBlocked) return;
     const room = this.room;
     if (!room) return;
     const { id, data } = packet;
@@ -364,6 +431,11 @@ export class Gateway {
       ws.close(1011);
       return;
     }
+    if (this.storageBlocked) {
+      this.send(ws, { type: "error", fatal: true, message: STORAGE_LIMIT_MESSAGE });
+      ws.close(1013, "World storage limit");
+      return;
+    }
     const peer: Peer = {
       id: "",
       nick: "",
@@ -383,6 +455,7 @@ export class Gateway {
     }, 10000);
     const rotate = setTimeout(() => ws.close(1012, "Reconnect"), 270000);
     ws.on("message", (raw, isBinary) => {
+      if (this.storageBlocked) return;
       if (isBinary) return ws.close(1003);
       const now = Date.now();
       if (now - peer.reset > 1000) {
@@ -478,13 +551,31 @@ export class Gateway {
   async close() {
     this.closed = true;
     if (this.timer) clearInterval(this.timer);
+    this.timer = null;
     for (const p of this.peers.values()) p.socket.close(1001);
-    await this.persist();
-    if (this.store) {
-      await this.store.eval(RELEASE, { keys: [this.lease], arguments: [this.node] });
-      await this.store.close();
+    const errors: unknown[] = [];
+    try {
+      await this.persist();
+    } catch (error) {
+      errors.push(error);
+    } finally {
+      if (this.store) {
+        try {
+          await this.store.eval(RELEASE, { keys: [this.lease], arguments: [this.node] });
+        } catch (error) {
+          errors.push(error);
+        }
+        try {
+          await this.store.close();
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      this.room = null;
+      this.leaseUntil = 0;
     }
-    this.room = null;
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, "Gateway cleanup failed");
   }
 }
 export function createGameServer(options: ConstructorParameters<typeof Gateway>[0] = {}) {

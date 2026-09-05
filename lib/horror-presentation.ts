@@ -3,6 +3,7 @@ import type { AudioFX } from "./audio";
 import type { Dimension } from "./blocks";
 import type { HorrorEvent } from "./horror-director";
 import type { HuntWire } from "./horror-hunt";
+import { HorrorScreamBuffer, horrorScreamTiming } from "./horror-scream";
 
 export type HorrorPresentationContext = {
   enabled: boolean;
@@ -122,7 +123,12 @@ function distantTexture() {
 }
 type Material = THREE.MeshStandardMaterial | THREE.MeshBasicMaterial;
 type Cue = { event: HorrorEvent; age: number };
-type Voice = { nodes: AudioNode[]; sources: AudioScheduledSourceNode[]; end: number };
+type Voice = {
+  nodes: AudioNode[];
+  sources: AudioScheduledSourceNode[];
+  end: number;
+  close?: boolean;
+};
 
 /** Procedural presentation only: authoritative hunt logic owns movement, damage and death. */
 export class HorrorPresentation {
@@ -157,6 +163,8 @@ export class HorrorPresentation {
   private soundContext: AudioContext | null = null;
   private voices: Voice[] = [];
   private noise: AudioBuffer | null = null;
+  private scream = new HorrorScreamBuffer();
+  private outputVolume = 0;
   private facing = new THREE.Vector3();
   private up = new THREE.Vector3();
   private cameraPosition = new THREE.Vector3();
@@ -493,6 +501,13 @@ export class HorrorPresentation {
       return;
     }
     this.prepareAudio(context.volume);
+    if (!context.jumpscares) {
+      this.voices = this.voices.filter((voice) => {
+        if (!voice.close) return true;
+        this.stopVoice(voice);
+        return false;
+      });
+    }
     this.group.scale.set(1, 1, 1);
     this.group.rotation.x = this.group.rotation.z = 0;
     for (const arm of this.arms) arm.rotation.set(0, 0, 0);
@@ -623,7 +638,7 @@ export class HorrorPresentation {
         context.threat.targetId !== context.viewerId
       )
         continue;
-      this.sound(pending.event);
+      this.sound(pending.event, pending.age);
     }
     this.cues = [];
     this.pruneAudio();
@@ -747,6 +762,7 @@ export class HorrorPresentation {
 
   private prepareAudio(volume: number) {
     const ctx = this.audio.ctx;
+    this.outputVolume = horrorGain(this.audio.volume, volume);
     if (!ctx || !this.audio.enabled || ctx.state !== "running") {
       this.stopAudio();
       return;
@@ -758,6 +774,7 @@ export class HorrorPresentation {
       this.saturator?.disconnect();
       this.soundContext = ctx;
       this.noise = null;
+      this.scream.clear();
       this.bus = ctx.createGain();
       this.limiter = ctx.createDynamicsCompressor();
       this.limiter.threshold.value = -6;
@@ -780,7 +797,8 @@ export class HorrorPresentation {
       this.bus.connect(ctx.destination);
       this.bus.gain.value = 0;
     }
-    this.bus!.gain.setTargetAtTime(horrorGain(this.audio.volume, volume), ctx.currentTime, 0.04);
+    if (this.outputVolume <= 0) this.stopAudio();
+    else this.bus!.gain.setTargetAtTime(this.outputVolume, ctx.currentTime, 0.04);
     this.camera.getWorldPosition(this.cameraPosition);
     this.camera.getWorldQuaternion(this.cameraRotation);
     this.facing.set(0, 0, -1).applyQuaternion(this.cameraRotation);
@@ -816,6 +834,7 @@ export class HorrorPresentation {
       ctx !== this.audio.ctx ||
       !this.audio.enabled ||
       ctx.state !== "running" ||
+      this.outputVolume <= 0 ||
       !this.limiter ||
       this.voices.length >= 14
     )
@@ -908,7 +927,33 @@ export class HorrorPresentation {
     source.stop(t + length + 0.04);
   }
 
-  private sound(e: HorrorEvent) {
+  private playScream(position: readonly number[], level: number, age: number, duration: number) {
+    const timing = horrorScreamTiming(age, duration);
+    if (!timing) return;
+    const setup = this.voice(position, timing.delay + timing.length);
+    if (!setup) return;
+    const { ctx, voice, gain } = setup;
+    const source = ctx.createBufferSource(),
+      start = ctx.currentTime + timing.delay,
+      end = start + timing.length;
+    source.buffer = this.scream.get(ctx);
+    source.connect(gain);
+    gain.gain.setValueAtTime(0, ctx.currentTime);
+    gain.gain.setValueAtTime(0, start);
+    // The buffer already has its own envelope; this short fade protects late packet offsets.
+    gain.gain.linearRampToValueAtTime(
+      Math.min(1, level),
+      start + Math.min(0.006, timing.length / 3),
+    );
+    gain.gain.setValueAtTime(Math.min(1, level), Math.max(start + 0.006, end - 0.015));
+    gain.gain.linearRampToValueAtTime(0, end);
+    voice.nodes.push(source);
+    voice.sources.push(source);
+    source.start(start, timing.offset, timing.length);
+    source.stop(end + 0.005);
+  }
+
+  private sound(e: HorrorEvent, age = 0) {
     if (e.reason === "passive-watch") return;
     const p = e.p,
       amount = 0.5 + clamp(e.intensity) * 0.5;
@@ -920,21 +965,65 @@ export class HorrorPresentation {
       this.playNoise(p, 2.5, 0.13 * amount, 1650, 2.2, 0.4);
       this.playNoise(p, 1.4, 0.06 * amount, 420, 0.7, 0.25);
     } else if (e.kind === "jumpscare") {
-      // A whispered intake, a deliberate gap, then layered vocal formants and a low impact.
+      // A whispered intake, a deliberate gap, then an original voiced shriek and low impact.
       // The original bus/compressor/soft limiter ceiling stays unchanged.
       for (const voice of this.voices) this.stopVoice(voice);
       this.voices = [];
       this.camera.getWorldPosition(this.cameraPosition);
       const close = [this.cameraPosition.x, this.cameraPosition.y - 2.8, this.cameraPosition.z];
-      this.playNoise(close, 0.15, 0.11 * amount, 1850, 2.4, 0.1);
-      this.playNoise(close, 0.14, 0.05 * amount, 340, 0.9, 0.1);
-      this.playNoise(close, 0.91, 0.26 * amount, 1700, 0.95, 0.028, 0.23);
-      this.playNoise(close, 0.83, 0.15 * amount, 690, 1.7, 0.04, 0.25);
-      this.playTone(close, 171, 0.98, 0.4 * amount, "triangle", 64, 0.22);
-      this.playTone(close, 227, 0.85, 0.19 * amount, "sawtooth", 93, 0.24);
-      this.playTone(close, 58, 1, 0.3 * amount, "sine", 32, 0.21);
-      this.playTone(close, 2410, 0.15, 0.035 * amount, "square", 730, 0.215);
-      this.playNoise(close, 0.22, 0.045 * amount, 2900, 3.3, 0.015, 0.36);
+      if (age < 0.04) {
+        this.playNoise(close, 0.15, 0.11 * amount, 1850, 2.4, 0.1);
+        this.playNoise(close, 0.14, 0.05 * amount, 340, 0.9, 0.1);
+      }
+      const end = Math.min(1.3, e.duration);
+      const noise = (
+        at: number,
+        length: number,
+        level: number,
+        frequency: number,
+        q: number,
+        attack: number,
+      ) => {
+        const remaining = Math.min(at + length, end) - Math.max(at, age);
+        if (remaining > 0.025)
+          this.playNoise(
+            close,
+            remaining,
+            level * amount,
+            frequency,
+            q,
+            attack,
+            Math.max(0, at - age),
+          );
+      };
+      const tone = (
+        at: number,
+        length: number,
+        level: number,
+        frequency: number,
+        type: OscillatorType,
+        to: number,
+      ) => {
+        const remaining = Math.min(at + length, end) - Math.max(at, age);
+        if (remaining > 0.025)
+          this.playTone(
+            close,
+            frequency,
+            remaining,
+            level * amount,
+            type,
+            to,
+            Math.max(0, at - age),
+          );
+      };
+      noise(0.23, 0.91, 0.12, 1700, 0.95, 0.028);
+      noise(0.25, 0.83, 0.075, 690, 1.7, 0.04);
+      tone(0.22, 0.98, 0.17, 171, "triangle", 64);
+      this.playScream(close, 0.92 * amount, age, e.duration);
+      tone(0.21, 1, 0.24, 58, "sine", 32);
+      if (age < 0.28) tone(0.215, 0.15, 0.025, 2410, "square", 730);
+      noise(0.36, 0.22, 0.045, 2900, 3.3, 0.015);
+      for (const voice of this.voices) voice.close = true;
     } else if (["watcher", "silhouette", "approach"].includes(e.kind)) {
       this.playTone(p, 53, 3.8, 0.05 * amount, "sine", 51);
       this.playTone(p, 56.2, 3.6, 0.028 * amount, "sine", 54.5);
@@ -995,6 +1084,7 @@ export class HorrorPresentation {
     this.bus = this.limiter = null;
     this.saturator = null;
     this.noise = null;
+    this.scream.clear();
     this.soundContext = null;
     this.seen.clear();
   }

@@ -25,6 +25,14 @@ Pięć stylów shaderów oraz opcja **Wyłączone** (bez efektów postprocessing
 
 Broń, podstawowe narzędzia, tarcza, łuk i bloki mają modele 3D widoczne przy nadgarstku także po naciśnięciu **F5**, u innych graczy oraz w podglądzie ekwipunku. Sprzęt podąża za animacją ręki. Uderzenie trwa 0,23 s we wszystkich widokach, a czas odnowienia pozostaje zależny od broni. W pierwszej osobie ramię jest zakotwiczone poniżej kadru, a uderzenie prowadzi dłoń w przód i w dół. Domyślna skórka ma rękawy na górze ramion i odsłoniętą szyję; własnoręcznie edytowane skórki pozostają zachowane.
 
+Potwory mają rozbudowane modele: zombie z poszarpanym ubraniem i dłońmi, szkielety z żebrami, szczęką i łukiem, uzbrojone Pigliny, segmentowane macki Ghastów i ruchome pierścienie Płomyków. Zamach potworów prowadzi ręce w górę, następnie do przodu i w dół; trafienie następuje w chwili kontaktu, po której wracają do pozy spoczynkowej. W multiplayer widać również napinanie łuku szkieletu.
+
+Endermany są neutralne do chwili uderzenia lub spojrzenia prosto w oczy. Spojrzenie w nogi, tułów albo przez pełną ścianę ich nie prowokuje. W multiplayerze ścigają osobę, która je sprowokowała; bliżej stojący kolega nie przejmuje automatycznie agresji. Po sprowokowaniu trzeba walczyć lub uciekać, aż agresja wygaśnie.
+
+Podczas kopania odrywają się drobinki z uderzanej powierzchni, a zniszczenie bloku rozrzuca większe odłamki. Drewno, liście, szkło i świecące materiały dają różne fragmenty, które opadają i odbijają się od podłoża. Efekt korzysta ze stałej puli i przełącznika **Cząsteczki** w ustawieniach grafiki.
+
+Otwarcie skrzyni, pieca, craftingu, ekwipunku lub czatu uwalnia kursor, ale postać nadal kończy skok i spada na ziemię. Pod wodą nadal zużywa tlen, a upadek i lawa pozostają niebezpieczne. **Esc** w pojedynczym świecie wstrzymuje grę; w multiplayer otwarte menu nie zatrzymuje fizyki Twojej postaci.
+
 ## Pierwsze kroki
 
 1. Wybierz **Tryb i trudność**, a następnie tryb przetrwania lub dołącz do świata wieloosobowego. Nowa postać zaczyna z pustym ekwipunkiem.
@@ -60,6 +68,8 @@ Obsydianowa ruina stoi blisko spawnu przy **X −18, Z 12**, około 28 bloków o
 
 Smok ma **600 punktów życia**. Kryształy przyspieszają jego regenerację, więc najpierw je zniszcz. Smok wykonuje częstsze przeloty i wystrzeliwuje podwójne salwy; poniżej połowy zdrowia przechodzi w **furię**, przyspiesza i strzela trzema silniejszymi pociskami. Unikaj salw ruchem w bok i korzystaj z osłon. W multiplayer smok zmienia cele między uczestnikami walki; wszyscy walczą z tym samym smokiem. Starszy zapis zachowuje proporcję pozostałego zdrowia przy zwiększeniu jego puli; pokonany smok nie zostaje wskrzeszony.
 
+Na pierwszą próbę przygotuj pełną diamentową zbroję, miecz, łuk, kilka stosów strzał, jedzenie i bloki. Celując w kryształy z ziemi, odsuń się od wieży i kieruj strzałę ponad szczyt filaru — obsydian zatrzymuje pociski. Dwa stosy strzał mogą nie wystarczyć przy wielu chybieniach; zapas czterech–pięciu stosów daje więcej prób. Najpierw usuń kryształy, potem strzelaj z wyprzedzeniem w nadlatującego smoka i wykorzystuj jego niskie przeloty.
+
 ## Poziom trudności i Horror
 
 Wybierz trudność podczas tworzenia świata lub dołączania do multiplayer. W trakcie gry możesz ją zmienić w **Ustawienia → Świat**.
@@ -88,6 +98,8 @@ Odległe ślady obecności stopniowo przechodzą w prawdziwe zagrożenie. Międz
 Najbezpieczniej jest **uciec**. Przed skokiem odsuń się z jego drogi; po chybieniu wykorzystaj chwilę jego słabości. Możesz też podjąć trudny pojedynek: Gość ma dużo zdrowia, poza oknem odsłonięcia otrzymuje mniejsze obrażenia, a broń zachowuje własny zasięg i czas odnowienia. Działają również strzały. Gracze, którzy wybrali Horror, mogą pomóc sobie podczas wspólnego polowania.
 
 **Schwytanie uruchamia krótki jumpscare, po którym postać umiera i upuszcza wyposażenie zgodnie ze zwykłymi zasadami.** To skutek dosięgnięcia przez Gościa, nie nieunikniona śmierć od samego upływu czasu. Po udanej ucieczce lub pokonaniu Gościa przychodzi okres spokoju. Inne poziomy trudności pozostają wolne od tego zagrożenia.
+
+Nagłemu zbliżeniu towarzyszy autorski krzyk z narastającą, drżącą wysokością głosu i chropowatym wybrzmieniem. Dźwięk jest zsynchronizowany z obrazem także przy opóźnieniu sieci i respektuje głośność horroru oraz wyłączenie jumpscare.
 
 Podczas 1,3-sekundowego schwytania sterowanie ofiary jest zablokowane. Po zakończeniu pojawia się ekran śmierci z działającym kursorem, a odrodzenie przywraca sterowanie. Towarzysze mogą nadal się poruszać. Nagłe zbliżenie maski, szczęki i dłoni oraz warstwowe dźwięki tworzą efekt inspirowany rytmem straszenia FNAF, z własną postacią i własnymi dźwiękami.
 

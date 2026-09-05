@@ -201,7 +201,9 @@ export class Multiplayer {
   request(command: Record<string, unknown>, callback?: (data: any) => void) {
     if (
       this.chestBusy &&
-      !["inventoryGesture", "settleInventory", "armor", "equipArmor"].includes(String(command.type))
+      !["inventoryGesture", "settleInventory", "armor", "equipArmor", "environmentDamage"].includes(
+        String(command.type),
+      )
     )
       return "";
     if (!this.connected) {
@@ -568,21 +570,23 @@ export class Multiplayer {
   }
   sendInput() {
     const g = this.game;
+    const active =
+      g.active && !g.needsCapture && (typeof document === "undefined" || !document.hidden);
     this.send({
       type: "input",
-      active: g.active && !g.needsCapture && (typeof document === "undefined" || !document.hidden),
-      sprinting: g.sprinting,
+      active,
+      sprinting: active && g.sprinting,
       furnaceKey: g.pauseReason === "furnace" ? g.adventure.currentFurnace : null,
       p: g.position.toArray(),
       yaw: g.yaw,
       pitch: g.pitch,
       dimension: g.world.dimension,
-      moving: g.active && Math.abs(g.velocity.x) + Math.abs(g.velocity.z) > 0.2,
-      crouch: g.crouching,
-      swing: g.swingTime > 0,
-      swingProgress: g.swingTime > 0 ? 1 - g.swingTime / SWING_DURATION : -1,
+      moving: active && Math.abs(g.velocity.x) + Math.abs(g.velocity.z) > 0.2,
+      crouch: active && g.crouching,
+      swing: active && g.swingTime > 0,
+      swingProgress: active && g.swingTime > 0 ? 1 - g.swingTime / SWING_DURATION : -1,
       held: g.hotbar[g.selected] ?? 0,
-      blocking: g.rightDown,
+      blocking: active && g.rightDown,
       grounded: g.grounded,
       armor: g.adventure.data.armor,
     });
@@ -789,7 +793,9 @@ export class Multiplayer {
         walkBlend: w.walkBlend,
         heading: w.heading,
         attackClock: w.attackClock,
+        rangedAttack: !!w.rangedAttack,
         hurt: w.hurt,
+        anger: Math.max(0, Math.min(30, Number(w.anger) || 0)),
         fuse: w.fuse,
         deathTime: w.deathTime,
         timer: Math.max(1, w.timer),
@@ -804,6 +810,8 @@ export class Multiplayer {
         () => {},
         () => {},
       );
+      // The zero-delta presentation update has no local observer; keep server gaze progress.
+      m.eyeContact = Math.max(0, Math.min(0.25, Number(w.eyeContact) || 0));
       m.group.rotation.set(...w.r);
       if (w.head) m.head.rotation.set(w.head[0], w.head[1], 0);
       m.group.userData.target = w.p;
@@ -854,7 +862,14 @@ export class Multiplayer {
   }
   mine(t: { x: number; y: number; z: number; id: number }) {
     if ([...this.pending.values()].some((p) => p.command.type === "mine")) return;
-    this.request({ type: "mine", x: t.x, y: t.y, z: t.z, expected: t.id });
+    const { x, y, z, id } = t,
+      dimension = this.game.world.dimension;
+    this.request({ type: "mine", x, y, z, expected: id }, (result) => {
+      if (!result.ok || this.game.world.dimension !== dimension) return;
+      if (this.game.settings.particles)
+        this.game.blockParticles?.break(id, { x: x + 0.5, y: y + 0.5, z: z + 0.5 });
+      this.game.audio.play("break");
+    });
   }
   interact() {
     const g = this.game,

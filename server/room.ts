@@ -110,6 +110,8 @@ const mobFields = [
 export class Room {
   seed = 24680;
   clock = 90;
+  private restoredProvocationsUntil = 0;
+  private restoredProvocations = new Set<string>();
   tickId = 0;
   sequence = 0;
   won = false;
@@ -278,6 +280,7 @@ export class Room {
     p.nick = nick;
     p.skin = skin;
     p.seen = this.now();
+    this.restoredProvocations.delete(id);
     const selectedDifficulty = normalizeDifficulty(
       difficulty,
       normalizeDifficulty(p.profile.difficulty),
@@ -405,7 +408,6 @@ export class Room {
       p.dimension = m.dimension as Dimension;
       p.yaw = Number.isFinite(m.yaw) ? Number(m.yaw) : 0;
       p.pitch = Math.max(-1.54, Math.min(1.54, Number(m.pitch) || 0));
-      p.moving = !!m.moving;
       if (
         p.active &&
         m.active !== true &&
@@ -414,6 +416,7 @@ export class Room {
       )
         this.send(id, { type: "horrorReset" });
       p.active = m.active === true;
+      p.moving = p.active && !!m.moving;
       if (m.furnaceKey === null) this.furnaceViewers.delete(id);
       else if (
         typeof m.furnaceKey === "string" &&
@@ -421,16 +424,16 @@ export class Room {
         this.furnaceInReach(p, m.furnaceKey)
       )
         this.furnaceViewers.set(id, m.furnaceKey);
-      p.sprinting = m.sprinting === true;
-      p.crouch = !!m.crouch;
-      p.swing = !!m.swing;
+      p.sprinting = p.active && m.sprinting === true;
+      p.crouch = p.active && !!m.crouch;
+      p.swing = p.active && !!m.swing;
       p.swingProgress = p.swing ? Math.max(0, Math.min(1, Number(m.swingProgress) || 0)) : -1;
       p.held =
         Number.isInteger(m.held) && (BLOCKS[Number(m.held)] || ITEMS.some((i) => i.id === m.held))
           ? Number(m.held)
           : 0;
       if (p.held > 0 && !this.owns(p, p.held)) p.held = 0;
-      p.blocking = !!m.blocking && p.held === 126;
+      p.blocking = p.active && !!m.blocking && p.held === 126;
       p.grounded = !!m.grounded;
       // Equipment is changed only by atomic inventory commands, never by input metadata.
       p.armor = p.equipment.chest;
@@ -1188,6 +1191,11 @@ export class Room {
     if (m.dead) return;
     m.hp -= n;
     m.hurt = 0.3;
+    if (m.kind === "enderman") {
+      m.anger = 30;
+      m.angerTarget = p.id;
+      m.eyeContact = 0;
+    }
     if (m.hp <= 0) {
       m.die();
       this.drop(
@@ -1468,9 +1476,51 @@ export class Room {
     }
     for (const [dimension, r] of this.regions) {
       const targets = active.filter((p) => p.dimension === dimension && p.health > 0);
+      for (const m of r.mobs.values()) {
+        if (m.kind !== "enderman") continue;
+        const owner = this.players.get(m.angerTarget);
+        if (
+          !m.dead &&
+          m.anger > 0 &&
+          this.restoredProvocations.has(m.angerTarget) &&
+          owner?.seen === 0 &&
+          owner.health > 0 &&
+          owner.dimension === dimension &&
+          this.now() < this.restoredProvocationsUntil
+        ) {
+          // Restored profiles reconnect after the first tick; wait briefly without attacking anyone.
+          m.attackClock = 0;
+          m.anger = Math.max(0, m.anger - dt);
+          if (m.anger > 0) continue;
+          m.angerTarget = "";
+          m.eyeContact = 0;
+        }
+        if (m.dead || (m.anger > 0 && !targets.some((p) => p.id === m.angerTarget))) {
+          // Losing the provoker never transfers an already pending attack to an innocent player.
+          m.anger = 0;
+          m.angerTarget = "";
+          m.eyeContact = 0;
+          m.attackClock = 0;
+        } else if (m.anger <= 0 && m.eyeContact <= 0) m.angerTarget = "";
+      }
       if (!targets.length) continue;
+      const observers = targets
+        .filter((p) => p.active)
+        .map((p) => ({
+          player: p,
+          ray: new THREE.Ray(
+            vec(p.p).add(new THREE.Vector3(0, p.crouch ? 1.3 : 1.62, 0)),
+            new THREE.Vector3(
+              -Math.sin(p.yaw) * Math.cos(p.pitch),
+              Math.sin(p.pitch),
+              -Math.cos(p.yaw) * Math.cos(p.pitch),
+            ),
+          ),
+        }));
       r.fluid.tick(dt);
       for (const [id, m] of r.mobs) {
+        if (m.kind === "enderman" && m.anger > 0 && !targets.some((p) => p.id === m.angerTarget))
+          continue;
         let p = targets[0];
         for (const q of targets)
           if (
@@ -1478,6 +1528,30 @@ export class Room {
             vec(p.p).distanceToSquared(m.group.position)
           )
             p = q;
+        if (m.kind === "enderman") {
+          const provoker = m.anger > 0 ? targets.find((q) => q.id === m.angerTarget) : undefined;
+          if (provoker) p = provoker;
+          else {
+            // An observer may stand behind a nearer player who is looking elsewhere.
+            let watching: (typeof observers)[number] | undefined;
+            for (const observer of observers)
+              if (
+                m.looksIntoEyes(observer.ray, r.world) &&
+                (!watching ||
+                  vec(observer.player.p).distanceToSquared(m.group.position) <
+                    vec(watching.player.p).distanceToSquared(m.group.position))
+              )
+                watching = observer;
+            if (watching) {
+              p = watching.player;
+              if (m.angerTarget !== p.id) m.eyeContact = 0;
+              m.angerTarget = p.id;
+            } else {
+              m.angerTarget = "";
+              m.eyeContact = 0;
+            }
+          }
+        }
         m.update(
           dt,
           this.clock,
@@ -1520,6 +1594,9 @@ export class Room {
                     if (block && ![12, 13, 18, 35].includes(block)) r.world.set(a, b, c, 0);
                   }
           },
+          m.kind === "enderman"
+            ? observers.find((observer) => observer.player === p)?.ray
+            : undefined,
         );
         if (
           (m.dead && m.deathTime > 1.4) ||
@@ -1714,6 +1791,10 @@ export class Room {
       ...values,
       target: [999, 0, 999],
       head: [round(m.head.rotation.x), round(m.head.rotation.y)],
+      rangedAttack: m.rangedAttack,
+      anger: round(m.anger),
+      eyeContact: round(m.eyeContact),
+      angerTarget: m.angerTarget || undefined,
     } as MobWire;
   }
   frame(): FrameWire & {
@@ -1812,6 +1893,8 @@ export class Room {
     if (s.version !== 1) throw Error("Unsupported world");
     this.facePeers.clear();
     this.clock = s.clock;
+    this.restoredProvocationsUntil = this.now() + 12000;
+    this.restoredProvocations.clear();
     this.tickId = s.tick;
     this.sequence = s.sequence;
     this.won = s.won;
@@ -1904,6 +1987,15 @@ export class Room {
         this.ensure(rr.d, wire.p[0], wire.p[2]);
         const m = new Mob(wire.kind, wire.p[0], wire.p[2], r.world);
         for (const k of mobFields) m[k] = wire[k];
+        // Damage flash can provoke an Enderman; persisted anger must win over that setter.
+        m.anger = Math.max(0, Math.min(30, Number(wire.anger) || 0));
+        m.eyeContact = Math.max(0, Math.min(0.25, Number(wire.eyeContact) || 0));
+        m.angerTarget =
+          typeof wire.angerTarget === "string" && wire.angerTarget.length <= 64
+            ? wire.angerTarget
+            : "";
+        if (m.anger > 0 && m.angerTarget) this.restoredProvocations.add(m.angerTarget);
+        m.rangedAttack = !!wire.rangedAttack;
         m.dead = wire.dead;
         m.group.position.fromArray(wire.p);
         m.group.rotation.set(...wire.r);
