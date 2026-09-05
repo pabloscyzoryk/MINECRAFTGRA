@@ -6,6 +6,10 @@
 
 **Blokowy świat do odkrywania, budowania i wspólnej gry — bez instalowania klienta.** Gra 3D w przeglądarce z trybem przetrwania, craftingiem, trzema wymiarami, smokiem, edytorem postaci i multiplayerem. Na komputerze sterujesz myszą i klawiaturą, a na telefonie przyciskami dotykowymi.
 
+### [▶ Zagraj teraz — minecraftgra.vercel.app](https://minecraftgra.vercel.app)
+
+Wybierz **Tryb wieloosobowy**, wpisz nick i zaproś znajomych pod ten sam adres. Publiczne wdrożenie korzysta z **Vercel Hobby** i istniejącej bazy **Redis Cloud Free 30 MB**. Zmiany wysłane do gałęzi `main` są automatycznie wdrażane.
+
 [Pierwsze kroki](#pierwsze-kroki) · [Sterowanie](#sterowanie) · [Multiplayer i rozmowy](#multiplayer-i-rozmowy) · [Uruchomienie lokalne](#uruchomienie-lokalne) · [Wdrożenie na Vercelu](docs/DEPLOYMENT.md)
 
 ## Co znajdziesz w grze
