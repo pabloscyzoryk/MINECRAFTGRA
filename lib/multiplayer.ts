@@ -6,7 +6,15 @@ import type { Game } from "./engine";
 import type { Dimension } from "./blocks";
 import { Mob, cube, mat } from "./entities";
 import { SkinModel, readSkin, defaultSkin } from "./skin-model";
-import { PROTOCOL, type PlayerWire, type SkinWire, type FrameWire, type Vec } from "./net-protocol";
+import {
+  PROTOCOL,
+  validWorldId,
+  type WorldAdminResult,
+  type PlayerWire,
+  type SkinWire,
+  type FrameWire,
+  type Vec,
+} from "./net-protocol";
 import { VoiceChat } from "./voice";
 import { weapon } from "./combat";
 import { SWING_DURATION } from "./interaction-effects";
@@ -42,6 +50,20 @@ export class Multiplayer {
   closed = false;
   fatal = false;
   id = "";
+  worldId = "";
+  worldResetNotice = "";
+  adminExpiresAt = 0;
+  private worldResetPending = false;
+  private retiredWorlds = new Set<string>();
+  private adminRequests = new Map<
+    string,
+    {
+      action: "unlock" | "reset";
+      expectedWorldId?: string;
+      resolve: (result: WorldAdminResult) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
   clock = 90;
   horrorClock = 0;
   huntClock = 0;
@@ -150,29 +172,38 @@ export class Multiplayer {
   }
   open() {
     if (this.closed) return;
-    this.status = "Łączenie z publicznym światem…";
+    this.adminExpiresAt = 0;
+    this.status = this.worldResetNotice
+      ? this.worldResetNotice + " Łączenie…"
+      : "Łączenie z publicznym światem…";
     this.emit();
     const url = new URL("/api/game", location.href);
     url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
     try {
-      this.socket = new WebSocket(url);
-      this.socket.onopen = () => {
+      const socket = new WebSocket(url);
+      this.socket = socket;
+      socket.onopen = () => {
+        if (this.closed || this.socket !== socket) return;
         this.status = "Wczytywanie wspólnego świata…";
-        this.join();
         this.send({ type: "ping", time: performance.now() });
       };
-      this.socket.onmessage = (e) => {
+      socket.onmessage = (e) => {
+        if (this.closed || this.socket !== socket) return;
         try {
           this.receive(JSON.parse(String(e.data)));
         } catch (err) {
           console.error("Network message", err);
         }
       };
-      this.socket.onerror = () => {
+      socket.onerror = () => {
+        if (this.closed || this.socket !== socket) return;
         this.status = "Nie można połączyć się z serwerem.";
         this.emit();
       };
-      this.socket.onclose = () => {
+      socket.onclose = () => {
+        if (this.socket !== socket) return;
+        this.cancelAdminRequests("Połączenie zostało zamknięte. Odblokuj ponownie administrację.");
+        if (this.joinTimer) clearTimeout(this.joinTimer);
         this.clearRemoteFaces();
         this.connected = false;
         if (!this.closed && (!this.game.net || this.game.net === this)) {
@@ -184,7 +215,9 @@ export class Multiplayer {
           this.game.emit();
         }
         if (!this.closed && !this.fatal) {
-          this.status = "Połączenie przerwane. Ponawianie…";
+          this.status = this.worldResetNotice
+            ? this.worldResetNotice + " Ponowne dołączanie…"
+            : "Połączenie przerwane. Ponawianie…";
           this.reconnectTimer = setTimeout(() => this.open(), this.reconnectDelay);
           this.reconnectDelay = Math.min(10000, this.reconnectDelay * 1.6);
         }
@@ -210,8 +243,173 @@ export class Multiplayer {
     }, 3000);
   }
   send(data: unknown) {
-    if (this.socket?.readyState === WebSocket.OPEN && this.socket.bufferedAmount < 300000)
-      this.socket.send(JSON.stringify(data));
+    this.sendPacket(data);
+  }
+  private sendPacket(data: unknown): boolean {
+    if (this.socket?.readyState !== WebSocket.OPEN || this.socket.bufferedAmount >= 300000)
+      return false;
+    const packet =
+      data && typeof data === "object" && this.worldId ? { ...data, worldId: this.worldId } : data;
+    try {
+      this.socket.send(JSON.stringify(packet));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  unlockWorld(password: string): Promise<WorldAdminResult> {
+    return this.requestWorldAdmin("unlock", { password });
+  }
+  resetWorld(seed: number | null, expectedWorldId: string): Promise<WorldAdminResult> {
+    if (seed !== null && (!Number.isInteger(seed) || seed < -2147483648 || seed > 2147483647))
+      return Promise.resolve({
+        req: "",
+        ok: false,
+        message: "Seed musi być liczbą całkowitą od −2147483648 do 2147483647.",
+      });
+    if (!validWorldId(expectedWorldId) || expectedWorldId !== this.worldId)
+      return Promise.resolve({
+        req: "",
+        ok: false,
+        message: "Świat się zmienił. Ponownie przygotuj reset.",
+      });
+    return this.requestWorldAdmin("reset", { seed, expectedWorldId });
+  }
+  private registerAdminRequest(req: string, action: "unlock" | "reset", expectedWorldId?: string) {
+    // This closure never receives the password or the outgoing packet.
+    return new Promise<WorldAdminResult>((resolve) => {
+      const timer = setTimeout(
+        () =>
+          this.finishAdminRequest(req, {
+            req,
+            ok: false,
+            message: "Serwer nie potwierdził operacji. Sprawdź stan połączenia przed ponowieniem.",
+          }),
+        20000,
+      );
+      this.adminRequests.set(req, { action, expectedWorldId, resolve, timer });
+    });
+  }
+  private requestWorldAdmin(
+    action: "unlock" | "reset",
+    data: { password?: string; seed?: number | null; expectedWorldId?: string },
+  ): Promise<WorldAdminResult> {
+    if (this.closed || this.socket?.readyState !== WebSocket.OPEN || !this.worldId)
+      return Promise.resolve({ req: "", ok: false, message: "Połącz się ze wspólnym światem." });
+    if (this.adminRequests.size)
+      return Promise.resolve({
+        req: "",
+        ok: false,
+        message: "Poczekaj na zakończenie poprzedniej operacji.",
+      });
+    const req = "admin-" + Date.now().toString(36) + "-" + ++this.sequence;
+    const promise = this.registerAdminRequest(req, action, data.expectedWorldId);
+    if (!this.sendPacket({ type: "worldAdmin", action, req, ...data }))
+      this.finishAdminRequest(req, {
+        req,
+        ok: false,
+        message: "Nie udało się wysłać operacji. Spróbuj po odzyskaniu połączenia.",
+      });
+    return promise;
+  }
+  private finishAdminRequest(req: string, result: WorldAdminResult) {
+    const pending = this.adminRequests?.get(req);
+    if (!pending) return;
+    this.adminRequests.delete(req);
+    clearTimeout(pending.timer);
+    if (pending.action === "unlock")
+      this.adminExpiresAt = result.ok && Number.isFinite(result.expiresAt) ? result.expiresAt! : 0;
+    pending.resolve(result);
+    this.emit();
+  }
+  private cancelAdminRequests(message: string) {
+    this.adminExpiresAt = 0;
+    for (const req of this.adminRequests?.keys() ?? [])
+      this.finishAdminRequest(req, { req, ok: false, message });
+  }
+  private clearReplicas() {
+    this.clearRemoteFaces();
+    for (const r of this.remotes.values()) {
+      r.model.group.removeFromParent();
+      r.model.dispose();
+      r.label.material.map?.dispose();
+      r.label.material.dispose();
+    }
+    this.remotes.clear();
+    for (const m of this.entities.values()) {
+      m.group.removeFromParent();
+      m.dispose();
+    }
+    this.entities.clear();
+    for (const m of this.dropMeshes.values()) m.removeFromParent();
+    this.dropMeshes.clear();
+    for (const m of this.shotMeshes) m.removeFromParent();
+    this.shotMeshes = [];
+    this.appearances.clear();
+    this.players = [];
+    this.lastFrame = null;
+  }
+  /** Called only after a committed reset event or a server greeting with a new generation. */
+  private acceptWorldReset(worldId: string, message: string, seed?: number) {
+    const previous = this.worldId;
+    if (previous === worldId || this.retiredWorlds?.has(worldId)) return false;
+    this.retiredWorlds ??= new Set();
+    if (previous) this.retiredWorlds.add(previous);
+    if (this.retiredWorlds.size > 16)
+      this.retiredWorlds.delete(this.retiredWorlds.values().next().value!);
+    this.connected = false;
+    this.initialized = false;
+    this.worldResetPending = true;
+    this.worldId = worldId;
+    this.worldResetNotice = message || "Administrator utworzył nowy wspólny świat.";
+    this.status = this.worldResetNotice + " Ponowne dołączanie…";
+    for (const [req, pending] of this.adminRequests ?? [])
+      if (pending.action === "reset" && pending.expectedWorldId === previous)
+        this.finishAdminRequest(req, {
+          req,
+          ok: true,
+          message: this.worldResetNotice,
+          worldId,
+          seed,
+        });
+    this.cancelAdminRequests("Świat został zresetowany. Odblokuj ponownie administrację.");
+    this.pending.clear();
+    this.applied.clear();
+    this.inventoryQueue = [];
+    this.chestBusy = false;
+    this.inventoryRevision = 0;
+    this.chestRevisions.clear();
+    this.furnaceRevisions.clear();
+    this.furnaceOpenGeneration++;
+    this.furnaceRefreshKey = null;
+    this.clearEating();
+    this.clearBedRest();
+    this.bedRestRevision = -1;
+    this.clearReplicas();
+    this.voice.blur();
+    this.voice.clearRemote();
+    this.chat = [];
+    this.networkClock = this.profileClock = 0;
+    this.clock = 90;
+    this.horrorClock = this.huntClock = 0;
+    const g = this.game;
+    g.pause("multiplayer");
+    g.clearDynamic();
+    g.adventure.reset();
+    g.pack.reset();
+    g.inventory = {};
+    g.hotbar = Array(9).fill(0);
+    g.selected = 0;
+    g.heldId = -1;
+    g.world.edits = {};
+    g.world.waterLevels = {};
+    g.world.chunks.clear();
+    g.velocity.set(0, 0, 0);
+    g.fallDistance = 0;
+    g.horrorThreat = null;
+    g.emit();
+    this.emit();
+    return true;
   }
   request(command: Record<string, unknown>, callback?: (data: any) => void) {
     if (
@@ -243,6 +441,50 @@ export class Multiplayer {
   receive(data: any) {
     if (this.closed) return;
     const g = this.game;
+    if (data.type === "worldAdminResult") {
+      if (typeof data.req !== "string" || !this.adminRequests?.has(data.req)) return;
+      const result: WorldAdminResult = {
+        req: data.req,
+        ok: data.ok === true,
+        message: String(data.message ?? "").slice(0, 1000),
+        ...(Number.isInteger(data.seed) ? { seed: data.seed } : {}),
+        ...(validWorldId(data.worldId) ? { worldId: data.worldId } : {}),
+        ...(Number.isFinite(data.expiresAt) ? { expiresAt: data.expiresAt } : {}),
+      };
+      if (
+        this.adminRequests.get(data.req)?.action === "unlock" &&
+        result.worldId &&
+        result.worldId !== this.worldId
+      )
+        result.ok = false;
+      this.finishAdminRequest(data.req, result);
+      return;
+    }
+    if (data.type === "worldReset") {
+      if (!validWorldId(data.worldId)) return;
+      if (this.acceptWorldReset(data.worldId, String(data.message ?? ""), data.seed))
+        this.socket?.close(4001, "World reset");
+      return;
+    }
+    if (data.type === "ready" || data.type === "welcome") {
+      if (validWorldId(data.worldId)) {
+        if (this.retiredWorlds?.has(data.worldId)) return;
+        if (this.worldId && data.worldId !== this.worldId)
+          this.acceptWorldReset(
+            data.worldId,
+            "Administrator utworzył nowy wspólny świat.",
+            data.seed,
+          );
+        else this.worldId = data.worldId;
+      }
+    } else if (
+      !["error", "pong"].includes(data.type) &&
+      this.worldId &&
+      data.worldId !== this.worldId
+    )
+      return;
+    if (this.worldResetPending && !["ready", "welcome", "error", "pong"].includes(data.type))
+      return;
     if (data.type === "eating") {
       const session = this.eatSession ?? this.eatStartReq;
       if (data.state === null && session && data.session === session) this.clearEating();
@@ -344,8 +586,11 @@ export class Multiplayer {
       g.adventure.data.furnaces = {};
       this.inventoryRevision = Number(data.profile?.inventoryRevision) || 0;
       this.id = data.id;
+      this.worldResetPending = false;
       this.connected = true;
-      this.status = "Połączono";
+      this.status = this.worldResetNotice
+        ? this.worldResetNotice + " Połączono z nowym światem."
+        : "Połączono";
       this.reconnectDelay = 1000;
       this.clock = data.clock;
       this.horrorClock = Number(data.horrorClock) || 0;
@@ -1004,7 +1249,7 @@ export class Multiplayer {
     for (const key of ["skin", "cape"] as const) {
       const img = new Image();
       img.onload = () => {
-        if (this.closed) return;
+        if (this.closed || !Array.from(this.remotes.values()).includes(r)) return;
         const dest = r.model.data[key];
         if (img.width === dest.width && img.height === dest.height) {
           const c = dest.getContext("2d")!;
@@ -1468,6 +1713,7 @@ export class Multiplayer {
   }
   close() {
     if (this.closed) return;
+    this.cancelAdminRequests("Połączenie zostało zamknięte. Odblokuj ponownie administrację.");
     const ownsSession = this.game.net === this || this.game.net === undefined;
     if (ownsSession) {
       this.clearEating();
@@ -1490,17 +1736,7 @@ export class Multiplayer {
       }
     } else this.voice.close();
     this.socket?.close(1000);
-    for (const r of this.remotes.values()) {
-      r.model.group.removeFromParent();
-      r.model.dispose();
-      r.label.material.map?.dispose();
-      r.label.material.dispose();
-    }
-    this.remotes.clear();
-    for (const m of this.entities.values()) m.group.removeFromParent();
-    this.entities.clear();
-    for (const m of this.dropMeshes.values()) m.removeFromParent();
-    for (const m of this.shotMeshes) m.removeFromParent();
+    this.clearReplicas();
     this.emit();
   }
 }

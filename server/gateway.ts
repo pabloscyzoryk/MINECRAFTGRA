@@ -2,9 +2,16 @@ import { createServer } from "node:http";
 import { createHash, randomUUID } from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
 import { createClient } from "redis";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile, rename } from "node:fs/promises";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { Room } from "./room";
+import {
+  WORLD_ADMIN_TTL,
+  configuredWorldPassword,
+  verifyWorldPassword,
+  validWorldSeed,
+  chooseWorldSeed,
+} from "./world-admin";
 import {
   PROTOCOL,
   validNick,
@@ -30,6 +37,10 @@ export const RELEASE =
   "if redis.call('GET',KEYS[1])==ARGV[1] then return redis.call('DEL',KEYS[1]) else return 0 end";
 export const PERSIST =
   "if redis.call('GET',KEYS[1])==ARGV[1] then redis.call('SET',KEYS[2],ARGV[2]);return 1 else return 0 end";
+// One MSET changes the sole snapshot and both fences together. The permanent legacy
+// fence also prevents pre-reset server versions from reacquiring the old lease key.
+export const RESET_WORLD =
+  "if (redis.call('GET',KEYS[1]) or 'legacy')~=ARGV[1] then return 0 end;redis.call('MSET',KEYS[1],ARGV[2],KEYS[2],ARGV[3],KEYS[3],ARGV[4],KEYS[4],'reset:'..ARGV[2]);redis.call('PEXPIRE',KEYS[3],ARGV[5]);return 1";
 export const REDIS_CODEC_PREFIX = "MINECRAFTGRA:GZIP1:";
 export const DEFAULT_REDIS_SNAPSHOT_BYTES = 6 * 1024 * 1024;
 export const MAX_REDIS_JSON_BYTES = 64 * 1024 * 1024;
@@ -84,7 +95,14 @@ async function redisStore(url: string): Promise<Store> {
     },
   };
 }
-type Packet = { type: string; id: string; data?: any; node?: string; connection?: string };
+type Packet = {
+  type: string;
+  id: string;
+  data?: any;
+  node?: string;
+  connection?: string;
+  worldId?: string;
+};
 type Peer = {
   id: string;
   nick: string;
@@ -97,6 +115,12 @@ type Peer = {
   face: number;
   faceActive: boolean;
   joined: boolean;
+  worldId: string;
+  adminUntil: number;
+  adminAttempts: number;
+  adminWindow: number;
+  adminBusy: boolean;
+  clearJoinTimeout?: () => void;
 };
 export class Gateway {
   node = randomUUID();
@@ -112,6 +136,12 @@ export class Gateway {
   starting: Promise<void> | null = null;
   closed = false;
   storageBlocked = false;
+  worldId = "legacy";
+  seed = 24680;
+  resetting = false;
+  adminAttempts = 0;
+  adminWindow = 0;
+  localWrites: Promise<unknown> = Promise.resolve();
   maxSnapshotBytes: number;
   local: boolean;
   namespace: string;
@@ -119,6 +149,8 @@ export class Gateway {
   incoming: string;
   lease: string;
   snapshot: string;
+  generation: string;
+  legacyLease: string;
   cameraPlayers = 1;
   cameraPublishing = false;
   cameraForwarding = false;
@@ -129,6 +161,7 @@ export class Gateway {
       namespace?: string;
       file?: string;
       maxSnapshotBytes?: number;
+      resetPasswordHash?: string;
     } = {},
   ) {
     this.local = options.local ?? !process.env.VERCEL;
@@ -140,7 +173,9 @@ export class Gateway {
     this.out = this.namespace + ":out";
     this.incoming = this.namespace + ":in";
     this.lease = this.namespace + ":leader";
+    this.legacyLease = this.lease;
     this.snapshot = this.namespace + ":snapshot";
+    this.generation = this.namespace + ":world-id";
   }
   async init() {
     if (this.starting) return this.starting;
@@ -153,6 +188,7 @@ export class Gateway {
     else if (process.env.REDIS_URL) this.store = await redisStore(process.env.REDIS_URL);
     else if (!this.local) throw Error("SETUP_REDIS");
     if (this.store) {
+      await this.refreshGeneration(false);
       await this.store.subscribe(this.out, (v) => {
         try {
           this.route(decodeRedis(v));
@@ -170,6 +206,8 @@ export class Gateway {
         try {
           this.room.restore(JSON.parse(await readFile(this.options.file, "utf8")));
         } catch {}
+      this.worldId = this.room.worldId;
+      this.seed = this.room.seed;
       this.leaseUntil = Infinity;
     }
     if (this.storageBlocked) return;
@@ -177,30 +215,111 @@ export class Gateway {
     this.timer = setInterval(() => void this.step(), 50);
     await this.step();
   }
-  makeRoom() {
-    return new Room((id, data) => this.broadcast({ type: "delivery", id, data }));
+  makeRoom(seed = this.seed, worldId = this.worldId) {
+    const room = new Room(
+      (id, data) => this.broadcast({ type: "delivery", id, data, worldId: room.worldId }),
+      undefined,
+      seed,
+      worldId,
+    );
+    return room;
+  }
+  private currentGeneration(packet: Packet) {
+    return (packet.worldId ?? "legacy") === (this.worldId ?? "legacy");
+  }
+  private notifyWorldReset() {
+    for (const p of this.peers.values()) {
+      p.adminUntil = 0;
+      if (p.worldId === this.worldId) continue;
+      this.send(p.socket, {
+        type: "worldReset",
+        seed: this.seed,
+        worldId: this.worldId,
+        message: "Wspólny świat został zresetowany. Trwa łączenie z nowym światem…",
+      });
+      p.joined = false;
+      p.socket.close(1012, "World reset");
+    }
+  }
+  /** Refresh only at startup/lease maintenance, never per input or frame. */
+  async refreshGeneration(notify = true) {
+    if (!this.store || this.resetting) return;
+    const before = this.worldId;
+    const generation = (await this.store.get(this.generation)) ?? "legacy";
+    if (this.resetting || this.worldId !== before) return;
+    if (generation === this.worldId && this.starting && this.lastTick) return;
+    const raw = await this.store.get(this.snapshot);
+    if (this.resetting || this.worldId !== before) return;
+    const snapshot = raw ? decodeRedis(raw) : null;
+    // A reset between the two reads must never pair a new save with an old lease.
+    if ((snapshot?.worldId ?? "legacy") !== generation) {
+      this.leaseUntil = 0;
+      return;
+    }
+    this.seed = Number.isInteger(snapshot?.seed) ? snapshot.seed : 24680;
+    if (generation !== this.worldId) {
+      this.worldId = generation;
+      this.room = null;
+      this.leaseUntil = 0;
+      this.nextLease = 0;
+      this.storageBlocked = false;
+      if (notify) this.notifyWorldReset();
+    }
+    this.lease = generation === "legacy" ? this.legacyLease : this.namespace + ":leader-v2";
+  }
+  private localWrite(json: string) {
+    if (!this.options.file) return Promise.resolve();
+    const file = this.options.file;
+    const write = this.localWrites
+      .catch(() => {})
+      .then(async () => {
+        // This is a replace-in-progress file, not a backup; only one save is retained.
+        const temporary = file + ".writing";
+        await writeFile(temporary, json, "utf8");
+        await rename(temporary, file);
+      });
+    this.localWrites = write;
+    return write;
   }
   async step() {
-    if (this.busy || this.closed || this.storageBlocked) return;
+    if (this.busy || this.closed || this.storageBlocked || this.resetting) return;
     this.busy = true;
+    const epoch = this.node,
+      initialWorldId = this.worldId;
     try {
       const now = Date.now();
       if (this.store && now >= this.nextLease) {
+        await this.refreshGeneration();
+        if (this.resetting || this.closed) return;
+        const generation = this.worldId,
+          token = this.node,
+          lease = this.lease;
+        const current = () =>
+          !this.resetting && !this.closed && generation === this.worldId && token === this.node;
         this.nextLease = now + 2000;
         if (this.room) {
           const ok = await this.store.eval(RENEW, {
-            keys: [this.lease],
-            arguments: [this.node, "8000"],
+            keys: [lease],
+            arguments: [token, "8000"],
           });
+          if (!current()) return;
           if (ok) this.leaseUntil = Date.now() + 6000;
           else {
             this.room = null;
             this.leaseUntil = 0;
           }
-        } else if (await this.store.set(this.lease, this.node, { NX: true, PX: 8000 })) {
+        } else if (await this.store.set(lease, token, { NX: true, PX: 8000 })) {
+          if (!current()) return;
           const raw = await this.store.get(this.snapshot);
+          if (!current()) return;
+          const data = raw ? decodeRedis(raw) : null;
+          if ((data?.worldId ?? "legacy") !== generation) {
+            await this.store.eval(RELEASE, { keys: [lease], arguments: [token] });
+            return;
+          }
           this.room = this.makeRoom();
-          if (raw) this.room.restore(decodeRedis(raw));
+          if (data) this.room.restore(data);
+          this.seed = this.room.seed;
           this.leaseUntil = Date.now() + 6000;
           this.nextPersist = 0;
           this.broadcast({ type: "delivery", id: "*", data: { type: "resync" } });
@@ -225,6 +344,7 @@ export class Gateway {
       }
       this.lastTick = now;
     } catch {
+      if (epoch !== this.node || initialWorldId !== this.worldId || this.resetting) return;
       this.leaseUntil = 0;
       for (const p of this.peers.values())
         this.send(p.socket, {
@@ -236,8 +356,18 @@ export class Gateway {
     }
   }
   async persist() {
-    if (!this.room || this.storageBlocked) return false;
-    const data = this.room.save();
+    if (!this.room || this.storageBlocked || this.resetting) return false;
+    const room = this.room,
+      token = this.node,
+      lease = this.lease,
+      worldId = this.worldId;
+    const current = () =>
+      room === this.room &&
+      token === this.node &&
+      worldId === this.worldId &&
+      !this.storageBlocked &&
+      !this.resetting;
+    const data = room.save();
     if (this.store) {
       const json = JSON.stringify(data);
       // A small gzip stream can expand beyond the reader's limit; never acknowledge that save.
@@ -247,19 +377,19 @@ export class Gateway {
         this.suspendStorage();
         // The control packet reaches only this world's gateways; the last snapshot is untouched.
         await Promise.allSettled([
-          this.store.publish(this.out, encodeRedis({ type: "storageLimit", id: "*" })),
-          this.store.eval(RELEASE, { keys: [this.lease], arguments: [this.node] }),
+          this.store.publish(this.out, encodeRedis({ type: "storageLimit", id: "*", worldId })),
+          this.store.eval(RELEASE, { keys: [lease], arguments: [token] }),
         ]);
         return false;
       }
       const saved = await this.store.eval(PERSIST, {
-        keys: [this.lease, this.snapshot],
-        arguments: [this.node, encoded],
+        keys: [lease, this.snapshot],
+        arguments: [token, encoded],
       });
-      return saved === 1 && !this.storageBlocked;
+      return saved === 1 && current();
     }
-    if (this.options.file) await writeFile(this.options.file, JSON.stringify(data), "utf8");
-    return true;
+    await this.localWrite(JSON.stringify(data));
+    return current();
   }
   private suspendStorage() {
     if (this.storageBlocked) return;
@@ -274,9 +404,10 @@ export class Gateway {
     }
   }
   broadcast(packet: Packet) {
-    if (this.storageBlocked) return;
+    packet.worldId ??= this.worldId ?? "legacy";
+    if (this.storageBlocked || this.resetting || !this.currentGeneration(packet)) return;
     const publish = () => {
-      if (this.storageBlocked) return;
+      if (this.storageBlocked || this.resetting || !this.currentGeneration(packet)) return;
       const camera =
         packet.type === "delivery" &&
         packet.data?.type === "faceFrame" &&
@@ -307,6 +438,11 @@ export class Gateway {
     } else publish();
   }
   route(packet: Packet) {
+    if (packet.type === "worldReset") {
+      if (!this.currentGeneration(packet)) void this.refreshGeneration().catch(() => {});
+      return;
+    }
+    if (!this.currentGeneration(packet) || this.resetting) return;
     if (packet.type === "storageLimit") {
       this.suspendStorage();
       return;
@@ -359,7 +495,9 @@ export class Gateway {
       }
   }
   forward(packet: Packet) {
-    if (this.closed || this.storageBlocked) return;
+    packet.worldId ??= this.worldId ?? "legacy";
+    if (this.closed || this.storageBlocked || this.resetting || !this.currentGeneration(packet))
+      return;
     if (!this.store || (this.room && Date.now() < this.leaseUntil)) this.handle(packet);
     else {
       const camera = packet.type === "faceFrame" && packet.data !== null;
@@ -374,7 +512,7 @@ export class Gateway {
     }
   }
   handle(packet: Packet) {
-    if (this.storageBlocked) return;
+    if (this.storageBlocked || this.resetting || !this.currentGeneration(packet)) return;
     const room = this.room;
     if (!room) return;
     const { id, data } = packet;
@@ -419,7 +557,148 @@ export class Gateway {
         ws.close(1013, "Slow connection");
         return;
       }
-      ws.send(JSON.stringify(data));
+      ws.send(
+        JSON.stringify({
+          ...(data as object),
+          worldId: (data as any)?.worldId ?? this.worldId ?? "legacy",
+        }),
+      );
+    }
+  }
+  async worldAdmin(peer: Peer, message: any) {
+    if (typeof message.req !== "string" || !/^[\w:-]{1,100}$/.test(message.req)) return;
+    const reply = (ok: boolean, text: string) =>
+      this.send(peer.socket, {
+        type: "worldAdminResult",
+        req: message.req,
+        ok,
+        message: text,
+        seed: this.seed,
+        worldId: this.worldId,
+        expiresAt: peer.adminUntil,
+      });
+    if (this.closed || peer.adminBusy || this.resetting) {
+      reply(false, "Operacja już trwa. Poczekaj na jej zakończenie.");
+      return;
+    }
+    peer.adminBusy = true;
+    try {
+      if (message.action === "unlock") {
+        const now = Date.now();
+        if (now - peer.adminWindow >= 60000) {
+          peer.adminWindow = now;
+          peer.adminAttempts = 0;
+        }
+        if (now - this.adminWindow >= 60000) {
+          this.adminWindow = now;
+          this.adminAttempts = 0;
+        }
+        if (++peer.adminAttempts > 4 || ++this.adminAttempts > 30) {
+          reply(false, "Zbyt wiele prób. Spróbuj ponownie za minutę.");
+          return;
+        }
+        const hash = this.options.resetPasswordHash ?? process.env.WORLD_RESET_PASSWORD_HASH;
+        if (!configuredWorldPassword(hash)) {
+          reply(false, "Reset świata nie jest skonfigurowany na serwerze.");
+          return;
+        }
+        const valid = await verifyWorldPassword(message.password, hash);
+        if (!valid) {
+          peer.adminUntil = 0;
+          reply(false, "Nieprawidłowe hasło.");
+          return;
+        }
+        await this.refreshGeneration();
+        if (
+          this.closed ||
+          peer.worldId !== this.worldId ||
+          peer.socket.readyState !== WebSocket.OPEN
+        )
+          return;
+        peer.adminUntil = Date.now() + WORLD_ADMIN_TTL;
+        peer.clearJoinTimeout?.();
+        reply(true, "Panel resetu odblokowany na 90 sekund.");
+        return;
+      }
+      if (message.action !== "reset") {
+        reply(false, "Nieznana operacja.");
+        return;
+      }
+      if (!peer.adminUntil || Date.now() >= peer.adminUntil) {
+        peer.adminUntil = 0;
+        reply(false, "Autoryzacja wygasła. Wpisz hasło ponownie.");
+        return;
+      }
+      if (message.expectedWorldId !== this.worldId || peer.worldId !== this.worldId) {
+        reply(false, "Świat został już zmieniony. Otwórz panel ponownie.");
+        return;
+      }
+      if (!validWorldSeed(message.seed)) {
+        reply(
+          false,
+          "Seed musi być liczbą całkowitą od −2147483648 do 2147483647 albo pustym wyborem losowym.",
+        );
+        return;
+      }
+      this.resetting = true;
+      peer.adminUntil = 0;
+      const expected = this.worldId,
+        worldId = randomUUID(),
+        token = randomUUID();
+      const seed = chooseWorldSeed(message.seed),
+        fresh = this.makeRoom(seed, worldId);
+      const json = JSON.stringify(fresh.save());
+      if (this.store) {
+        const encoded = encodeRedisJson(json, true);
+        if (
+          Buffer.byteLength(json) > MAX_REDIS_JSON_BYTES ||
+          Buffer.byteLength(encoded) > this.maxSnapshotBytes
+        )
+          throw Error("Fresh world exceeds storage limit");
+        const ok = await this.store.eval(RESET_WORLD, {
+          keys: [this.generation, this.snapshot, this.namespace + ":leader-v2", this.legacyLease],
+          arguments: [expected, worldId, encoded, token, "8000"],
+        });
+        if (ok !== 1) {
+          this.resetting = false;
+          await this.refreshGeneration();
+          reply(false, "Świat został już zmieniony. Otwórz panel ponownie.");
+          return;
+        }
+      } else await this.localWrite(json);
+      this.worldId = worldId;
+      this.seed = seed;
+      this.node = token;
+      this.lease = this.store ? this.namespace + ":leader-v2" : this.lease;
+      this.room = fresh;
+      this.storageBlocked = false;
+      this.leaseUntil = this.store ? Date.now() + 6000 : Infinity;
+      this.nextLease = Date.now() + 2000;
+      this.nextPersist = Date.now() + 2000;
+      this.lastTick = Date.now();
+      this.resetting = false;
+      if (!this.timer && !this.closed) this.timer = setInterval(() => void this.step(), 50);
+      // The requester gets the durable result before any socket is retired.
+      reply(true, "Nowy wspólny świat został trwale zapisany. Poprzedni świat usunięto.");
+      this.notifyWorldReset();
+      if (this.store)
+        await this.store
+          .publish(this.out, encodeRedis({ type: "worldReset", id: "*", worldId, data: { seed } }))
+          .catch(() => {});
+    } catch {
+      if (this.resetting) {
+        // A connection failure may hide a completed Lua reset. Never resume the old room.
+        this.room = null;
+        this.leaseUntil = 0;
+        this.nextLease = 0;
+      }
+      reply(
+        false,
+        "Nie udało się potwierdzić zapisu resetu. Odśwież połączenie przed ponowieniem.",
+      );
+    } finally {
+      this.resetting = false;
+      peer.adminBusy = false;
     }
   }
   async accept(ws: WebSocket) {
@@ -436,11 +715,6 @@ export class Gateway {
       ws.close(1011);
       return;
     }
-    if (this.storageBlocked) {
-      this.send(ws, { type: "error", fatal: true, message: STORAGE_LIMIT_MESSAGE });
-      ws.close(1013, "World storage limit");
-      return;
-    }
     const peer: Peer = {
       id: "",
       nick: "",
@@ -453,14 +727,19 @@ export class Gateway {
       face: 0,
       faceActive: false,
       joined: false,
+      worldId: this.worldId,
+      adminUntil: 0,
+      adminAttempts: 0,
+      adminWindow: Date.now(),
+      adminBusy: false,
     };
     this.peers.set(ws, peer);
     const timeout = setTimeout(() => {
       if (!peer.joined) ws.close(1008, "Join required");
     }, 10000);
+    peer.clearJoinTimeout = () => clearTimeout(timeout);
     const rotate = setTimeout(() => ws.close(1012, "Reconnect"), 270000);
     ws.on("message", (raw, isBinary) => {
-      if (this.storageBlocked) return;
       if (isBinary) return ws.close(1003);
       const now = Date.now();
       if (now - peer.reset > 1000) {
@@ -484,15 +763,29 @@ export class Gateway {
       }
       if (!m || typeof m !== "object") return;
       if (m.type === "ping") return this.send(ws, { type: "pong", time: m.time });
+      if (m.type === "worldAdmin") {
+        void this.worldAdmin(peer, m);
+        return;
+      }
+      if (this.storageBlocked) {
+        this.send(ws, { type: "error", fatal: true, message: STORAGE_LIMIT_MESSAGE });
+        return ws.close(1013, "World storage limit");
+      }
+      if (m.type === "join" && m.protocol !== PROTOCOL) {
+        this.send(ws, {
+          type: "error",
+          fatal: true,
+          message: "Ta wersja gry jest nieaktualna. Odśwież stronę lub pobierz nowe GRA.html.",
+        });
+        return ws.close(1008);
+      }
+      if (
+        this.resetting ||
+        peer.worldId !== this.worldId ||
+        (m.worldId ?? "legacy") !== this.worldId
+      )
+        return;
       if (m.type === "join") {
-        if (m.protocol !== PROTOCOL) {
-          this.send(ws, {
-            type: "error",
-            fatal: true,
-            message: "Ta wersja gry jest nieaktualna. Odśwież stronę lub pobierz nowe GRA.html.",
-          });
-          return ws.close(1008);
-        }
         if (!validToken(m.token) || !validNick(m.nick) || !validSkin(m.skin)) {
           this.send(ws, {
             type: "error",
@@ -548,10 +841,11 @@ export class Gateway {
       clearTimeout(timeout);
       clearTimeout(rotate);
       this.peers.delete(ws);
-      if (peer.id) this.forward({ type: "leave", id: peer.id });
+      if (peer.id && peer.joined)
+        this.forward({ type: "leave", id: peer.id, worldId: peer.worldId });
     });
     ws.on("error", () => {});
-    this.send(ws, { type: "ready" });
+    this.send(ws, { type: "ready", seed: this.seed, worldId: this.worldId });
   }
   async close() {
     this.closed = true;

@@ -146,6 +146,7 @@ const mobFields = [
 ] as const;
 export class Room {
   seed = 24680;
+  worldId = "legacy";
   clock = 90;
   private restoredProvocationsUntil = 0;
   private restoredProvocations = new Set<string>();
@@ -182,7 +183,12 @@ export class Room {
   constructor(
     public send: (id: string, data: unknown) => void,
     public now = () => Date.now(),
+    seed = 24680,
+    worldId = "legacy",
   ) {
+    this.seed = seed;
+    this.worldId = worldId;
+    this.horror = new HorrorDirector(seed);
     for (const dimension of DIMENSIONS_NET) {
       const world = new World(this.seed);
       world.dimension = dimension;
@@ -352,6 +358,7 @@ export class Room {
       type: "welcome",
       id,
       seed: this.seed,
+      worldId: this.worldId,
       player: this.publicPlayer(p),
       profile: p.profile,
       health: p.health,
@@ -2306,6 +2313,7 @@ export class Room {
     return {
       version: 1,
       seed: this.seed,
+      worldId: this.worldId,
       clock: this.clock,
       tick: this.tickId,
       sequence: this.sequence,
@@ -2363,6 +2371,11 @@ export class Room {
   }
   restore(s: ReturnType<Room["save"]>) {
     if (s.version !== 1) throw Error("Unsupported world");
+    this.seed =
+      Number.isInteger(s.seed) && s.seed >= -2147483648 && s.seed <= 2147483647 ? s.seed : 24680;
+    this.worldId = typeof s.worldId === "string" && s.worldId ? s.worldId : "legacy";
+    for (const r of this.regions.values()) r.world.seed = this.seed;
+    this.horror = new HorrorDirector(this.seed);
     this.facePeers.clear();
     this.clock = s.clock;
     this.restoredProvocationsUntil = this.now() + 12000;

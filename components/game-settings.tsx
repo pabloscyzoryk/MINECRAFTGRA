@@ -9,6 +9,7 @@ import DifficultyPicker from "@/components/difficulty-picker";
 import VoiceSettings from "@/components/voice-settings";
 import CameraSettings from "@/components/camera-settings";
 import { NetworkPlayers } from "@/components/multiplayer-menu";
+import WorldAdminSettings from "@/components/world-admin-settings";
 import type { Game } from "@/lib/engine";
 import type { Difficulty } from "@/lib/difficulty";
 import {
@@ -249,6 +250,7 @@ export default function GameSettingsPanel({
               biomach pada śnieg.
             </p>
           </div>
+          {online && game?.net && <WorldAdminSettings net={game.net} />}
         </div>
       </TabsContent>
       <TabsContent value="audio">

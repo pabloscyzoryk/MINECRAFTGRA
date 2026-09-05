@@ -135,7 +135,7 @@ test("Oversized mutations cannot overwrite the last acknowledged save or send a 
     0,
   );
   assert.deepEqual(player.messages, [
-    { type: "error", fatal: true, message: STORAGE_LIMIT_MESSAGE },
+    { type: "error", fatal: true, message: STORAGE_LIMIT_MESSAGE, worldId: "legacy" },
   ]);
   assert.deepEqual(player.closed, [[1013, "World storage limit"]]);
   const count = db.operations.length;

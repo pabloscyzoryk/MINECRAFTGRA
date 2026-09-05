@@ -2645,10 +2645,11 @@ export class Game extends WorldRenderer {
     this.clearDynamic();
     this.mode = s.mode === "creative" ? "creative" : "survival";
     this.difficulty = normalizeDifficulty(s.difficulty);
-    this.horrorDirector = new HorrorDirector(Number(s.seed) || 24680);
+    const restoredSeed = Number.isFinite(s.seed) ? s.seed : 24680;
+    this.horrorDirector = new HorrorDirector(restoredSeed);
     if (this.difficulty === "horror" && s.horror) this.horrorDirector.restore(s.horror);
     this.hungerTimer = this.regenerationTimer = 0;
-    this.world.seed = Number(s.seed) || 24680;
+    this.world.seed = restoredSeed;
     this.world.edits = typeof s.edits === "object" && s.edits ? s.edits : {};
     for (const key of Object.keys(this.world.edits))
       if (!BLOCKS[this.world.edits[key]] || !/^(overworld|nether|end):-?\d+,\d+,-?\d+$/.test(key))

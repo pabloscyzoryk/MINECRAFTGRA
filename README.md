@@ -51,6 +51,12 @@ Podczas gry HUD pozostawia więcej miejsca na świat. Pasek graczy, czatu, mikro
 
 Banery z poradami nie pojawiają się podczas gry. Nazwa wybranego przedmiotu lub pustej ręki rozmywa się i znika po trzech sekundach; wybór innego pola albo zmiana trzymanego przedmiotu pokazuje ją ponownie. Przy ograniczeniu animacji w systemie nazwa znika bez rozmycia. Pasek wytrzymałości pokazuje się tylko podczas jej ubytku i całkowicie znika po odzyskaniu 100%.
 
+### Reset wspólnego świata
+
+W multiplayer otwórz **Esc → Ustawienia → Świat → Reset wspólnego świata**. Wpisz hasło administratora i kliknij **Odblokuj**, a następnie wybierz **Losowy seed** albo **Własny seed**. Własny seed jest liczbą całkowitą od −2147483648 do 2147483647, również zerem. **Przygotuj reset** pokazuje podsumowanie; dopiero **Zresetuj świat** zatwierdza zmianę.
+
+Reset zastępuje jedyny wspólny świat we wszystkich wymiarach. Usuwa budowle, skrzynie, ekwipunki i postęp graczy, łupy, czat oraz stan potworów. Nie tworzy kopii poprzedniej wersji. Gracze zostają ponownie dołączeni do nowego świata, zachowując nicki i wygląd postaci. Odblokowanie wygasa po 90 sekundach albo po rozłączeniu. Hasło sprawdza serwer; nie jest zapisane w grze HTML ani w publicznym repozytorium. [Konfiguracja hasła na własnym serwerze](docs/DEPLOYMENT.md#hasło-resetowania-świata).
+
 ### Schody, półbloki, łóżka i zamki
 
 **Schody dębowe i kamienne** obracają się zgodnie z kierunkiem patrzenia. Kliknięcie górnej połowy bocznej powierzchni albo spodu bloku stawia odwrócone schody lub górny półblok. Dwie połówki tego samego materiału łączą się w pełny blok; po wydobyciu odzyskasz dwa półbloki. Po stopniach wchodzi się płynnie bez skakania, a obrys, pęknięcia i trafienia kursorem odpowiadają ich kształtowi. W księdze receptur znajdziesz oba materiały: trzy deski lub kamienie w rzędzie dają sześć półbloków, a sześć w układzie schodków — cztery schody.

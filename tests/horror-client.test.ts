@@ -149,6 +149,39 @@ test("Restoring a legacy single-player save always resets a previous Horror choi
   assert.deepEqual(game.pack.counts(), {});
 });
 
+test("World restore preserves zero and signed seeds for terrain and Horror", () => {
+  for (const seed of [0, -2147483648, 2147483647]) {
+    const { game } = gameFixture();
+    Object.assign(game, {
+      clearDynamic() {},
+      fluid: { clear() {} },
+      dimensionChanged() {},
+      ensure() {},
+      pack: new InventoryPack(),
+      selected: 0,
+      drops: { restore() {} },
+      adventure: { restore() {} },
+      spawnMobs() {},
+      velocity: new THREE.Vector3(),
+      wakeWater() {},
+    });
+    Object.assign(game.world, { switch() {} });
+    game.restore({
+      v: 1,
+      seed,
+      dimension: "overworld",
+      position: [0, 20, 0],
+      mode: "survival",
+      health: 20,
+      food: 20,
+      xp: 0,
+      clock: 90,
+    });
+    assert.equal(game.world.seed, seed);
+    assert.equal(game.horrorDirector.seed, seed);
+  }
+});
+
 test("Shader Off bypasses postprocessing and shadows; selecting a preset restores saved shadows", () => {
   const atmosphere = Object.create(Atmosphere.prototype) as Atmosphere;
   let direct = 0,

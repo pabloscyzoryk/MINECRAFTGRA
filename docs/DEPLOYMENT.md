@@ -48,12 +48,31 @@ W panelu projektu Vercel przejdź do **Settings → Environment Variables** i do
 | `REDIS_URL` | Prywatny adres klienta Redis, zaczynający się od `redis://` lub `rediss://` |
 | `WORLD_NAMESPACE` | `minecraftgra-production-v1` |
 | `WORLD_REDIS_MAX_SNAPSHOT_BYTES` | Opcjonalnie `6291456` (domyślne 6 MiB skompresowanego zapisu) |
+| `WORLD_RESET_PASSWORD_HASH` | Opcjonalny prywatny weryfikator scrypt; brak wartości blokuje reset świata |
 
 Adres i hasło skopiuj z ustawień połączenia bazy. Wymagany jest zwykły protokół Redis, **nie adres API REST**. Dla bazy z TLS użyj adresu `rediss://` podanego przez dostawcę. Dane wpisuj wyłącznie w zmiennych serwerowych Vercela; nie dodawaj ich do repozytorium, README ani pliku HTML. Plik [`.env.example`](../.env.example) zawiera tylko nazwy ustawień.
 
 `WORLD_NAMESPACE` przyjmuje litery łacińskie, cyfry, `_` i `-` — maksymalnie 80 znaków. Wszystkie instancje korzystające z tej samej bazy i namespace współdzielą jeden świat.
 
-Jeżeli tej samej bazy używa inny projekt, zachowaj istniejące połączenie i ustaw dla gry **unikalny namespace**, różny także od Preview. Gra odczytuje i zapisuje wyłącznie własne klucze `<namespace>:leader` i `<namespace>:snapshot` oraz korzysta z własnych kanałów `<namespace>:in` i `<namespace>:out`. Nie skanuje bazy, nie wykonuje globalnego czyszczenia ani nie zmienia konfiguracji Redis. Prefiksy rozdzielają dane i komunikaty; pamięć, operacje, połączenia i transfer pozostają wspólne dla wszystkich projektów tej bazy. Każda instancja serwera gry otwiera dwa połączenia Redis.
+Jeżeli tej samej bazy używa inny projekt, zachowaj istniejące połączenie i ustaw dla gry **unikalny namespace**, różny także od Preview. Gra używa własnych kluczy `<namespace>:leader`, `<namespace>:leader-v2`, `<namespace>:world-id` i `<namespace>:snapshot` oraz własnych kanałów `<namespace>:in` i `<namespace>:out`. Nie skanuje bazy, nie wykonuje globalnego czyszczenia ani nie zmienia konfiguracji Redis. Prefiksy rozdzielają dane i komunikaty; pamięć, operacje, połączenia i transfer pozostają wspólne dla wszystkich projektów tej bazy. Każda instancja serwera gry otwiera dwa połączenia Redis.
+
+### Hasło resetowania świata
+
+Reset jest domyślnie zablokowany. Wygeneruj prywatny weryfikator skryptem `scripts/hash-world-password.mjs`, przekazując hasło przez standardowe wejście. Skrypt wypisuje wyłącznie wynik w formacie `scrypt$<32 znaki hex soli>$<64 znaki hex klucza>`. Sól ma 16 losowych bajtów, wynik scrypt 32 bajty; używane są domyślne parametry Node.js (N=16384, r=8, p=1). Hasła nie dodawaj do argumentów polecenia, kodu, dokumentacji ani HTML.
+
+W PowerShell możesz wczytać hasło bez wyświetlania i przekazać je skryptowi:
+
+```powershell
+$worldResetSecret = Read-Host 'Hasło resetowania świata' -AsSecureString
+[System.Net.NetworkCredential]::new('', $worldResetSecret).Password | node scripts/hash-world-password.mjs
+Remove-Variable worldResetSecret
+```
+
+Wynik ustaw jako **Secret** `WORLD_RESET_PASSWORD_HASH` w **Production** projektu gry na Vercel i wdróż aktualizację. Nie używaj prefiksów zmiennych klienta, takich jak `NEXT_PUBLIC_` lub `VITE_`. Sam weryfikator również pozostaje prywatny. Zmiana tej wartości i ponowne wdrożenie zmienia hasło; pusta lub niepoprawna wartość wyłącza funkcję.
+
+W grze: **Esc → Ustawienia → Świat → Reset wspólnego świata**. Poprawne hasło odblokowuje operację na 90 sekund wyłącznie dla bieżącego połączenia. Próby odgadnięcia są ograniczane. Administrator wybiera losowy lub własny seed, przygotowuje podsumowanie i dopiero końcowym przyciskiem zatwierdza usunięcie danych.
+
+Reset atomowo zastępuje **ten sam pojedynczy snapshot** świeżym światem i zmienia dzierżawę serwera. Po pierwszym resecie starszy klucz `leader` pozostaje zablokowany, a nowe serwery korzystają z `leader-v2`; to mała informacja sterująca, nie kopia świata. Starsze instancje i opóźnione zapisy nie mogą przywrócić poprzedniej wersji. Numer generacji odrzuca stare pakiety graczy, a połączenia są odnawiane. Reset obejmuje wszystkie wymiary, budowle, skrzynie, ekwipunki, postęp, łupy i czat. **Nie ma automatycznej kopii ani cofania resetu.** Zwykłe wdrożenie nie resetuje świata.
 
 ## 3. Wdróż i dołącz
 

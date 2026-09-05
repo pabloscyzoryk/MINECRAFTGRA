@@ -11,7 +11,18 @@ export type FurnaceWire = { key: string; state: FurnaceState | null; revision: n
 export type { Difficulty } from "./difficulty";
 export type { HorrorEvent } from "./horror-director";
 export type { HuntWire, HuntPhase } from "./horror-hunt";
-export const PROTOCOL = 4;
+export const PROTOCOL = 5;
+export type WorldAdminResult = {
+  req: string;
+  ok: boolean;
+  message: string;
+  seed?: number;
+  worldId?: string;
+  expiresAt?: number;
+};
+export function validWorldId(value: unknown): value is string {
+  return typeof value === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(value);
+}
 export const SERVER_NAME = "Wspólny świat";
 export const MAX_PLAYERS = 16;
 export const FACE_FRAME_MAX_LENGTH = 400000;
@@ -92,6 +103,7 @@ export type DropWire = {
 export type BlockWire = [Dimension, number, number, number, number, number];
 export type FrameWire = {
   type: "frame";
+  worldId?: string;
   tick: number;
   clock: number;
   players: PlayerWire[];
