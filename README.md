@@ -33,7 +33,11 @@ Podczas kopania odrywają się drobinki z uderzanej powierzchni, a zniszczenie b
 
 Otwarcie skrzyni, pieca, craftingu, ekwipunku lub czatu uwalnia kursor, ale postać nadal kończy skok i spada na ziemię. Pod wodą nadal zużywa tlen, a upadek i lawa pozostają niebezpieczne. **Esc** w pojedynczym świecie wstrzymuje grę; w multiplayer otwarte menu nie zatrzymuje fizyki Twojej postaci.
 
+Kaktusy mają wystające kolce i węższy zielony korpus. Dotknięcie kolców bokiem lub wejście na ich szczyt zadaje obrażenia; samo przebywanie w pobliżu jest bezpieczne. Trafienia mają przerwę 0,8 s i uwzględniają trudność oraz pancerz. W multiplayer kontakt sprawdza serwer, również przy otwartym ekwipunku.
+
 ## Pierwsze kroki
+
+Menu startowe zachowuje podgląd świata i edytor postaci. Przewiń niżej, aby obejrzeć trzy wymiary, poznać budowanie i wspólną grę oraz przymierzyć kolory postaci. Przyciski prowadzą bezpośrednio do gry i jej ustawień. Podgląd 3D świata i edytora przestaje renderować, gdy górna część menu znika z ekranu; animacje strony uwzględniają systemowe ograniczenie ruchu.
 
 1. Wybierz **Tryb i trudność**, a następnie tryb przetrwania lub dołącz do świata wieloosobowego. Nowa postać zaczyna z pustym ekwipunkiem.
 2. Przytrzymaj LPM na drewnie, zbierz surowiec i otwórz ekwipunek klawiszem **E**. Postępujące pęknięcia bloku pokazują pracę narzędzia.
@@ -42,6 +46,14 @@ Otwarcie skrzyni, pieca, craftingu, ekwipunku lub czatu uwalnia kursor, ale post
 5. Otwórz **Atlas** klawiszem **J** i odkrywaj świat. Ruiny portali wymagają przygotowania, zanim zabiorą Cię do kolejnego wymiaru.
 
 **Kontynuuj zapisany świat** odtwarza wcześniejszy ekwipunek. Puste pola dotyczą nowej postaci i odrodzenia. W trybie kreatywnym przedmioty wybierasz z katalogu dostępnego w ekwipunku. Puste pole na pasku podręcznym oznacza pustą rękę.
+
+### Schody, półbloki, łóżka i zamki
+
+**Schody dębowe i kamienne** obracają się zgodnie z kierunkiem patrzenia. Kliknięcie górnej połowy bocznej powierzchni albo spodu bloku stawia odwrócone schody lub górny półblok. Dwie połówki tego samego materiału łączą się w pełny blok; po wydobyciu odzyskasz dwa półbloki. Po stopniach wchodzi się płynnie bez skakania, a obrys, pęknięcia i trafienia kursorem odpowiadają ich kształtowi. W księdze receptur znajdziesz oba materiały: trzy deski lub kamienie w rzędzie dają sześć półbloków, a sześć w układzie schodków — cztery schody.
+
+**Łóżko** jest niskie, ma białą poduszkę, czerwony koc i drewniane nogi oraz zajmuje dwa sąsiednie pola. Przy stawianiu obie części potrzebują miejsca i podparcia. Zniszczenie dowolnej połowy usuwa całe łóżko i daje jeden przedmiot. Kliknij je w Nadziemiu, aby ustawić odrodzenie i fizycznie się położyć. Po 10 sekundach nieprzerwanego leżenia podczas nocy zaczyna się dzień. Wstań klawiszem kucania (domyślnie **Shift**) lub przyciskiem **Wstań**, także na telefonie; wcześniejsze wyjście anuluje odliczanie. Możesz odpoczywać również za dnia. W multiplayer inni widzą leżącą postać, a jedno zajęte łóżko wystarcza, aby po 10 sekundach nadeszło wspólne rano. Atak, zniszczenie łóżka lub opuszczenie świata kończy odpoczynek. Skrzynia ma oddzielną pokrywę, boki i tył z zawiasami; zamek znajduje się tylko na przedniej ścianie.
+
+Wyprawy prowadzą również do **zamków o podstawie 73 × 73 bloki** i zrujnowanych twierdz. Za murami są wieże, dziedziniec, wielopiętrowy donżon, koszary, zbrojownia i skarbiec. Rycerze patrolują teren, atakują po wejściu w ich zasięg i wracają do obrony zamku po dłuższym pościgu. Pokonani obrońcy pozostają pokonani po zapisaniu świata. W atlasie (**J**) wybierz **Znajdź zamek**, aby otrzymać cel wyprawy; tryb kreatywny pozwala też od razu go odwiedzić. Zamki, obrońcy, łupy i nowe kształty działają w jednym wspólnym świecie multiplayer.
 
 ### Rudy, surowce i zbroje
 
@@ -110,16 +122,16 @@ Wydobywanie zależy od twardości bloku i narzędzia. Kwiaty zrywa pojedynczy kl
 | Klawisz / przycisk | Działanie |
 |---|---|
 | **W A S D** + mysz | Ruch i rozglądanie |
-| **Spacja** | Skok / pływanie w górę |
+| **Spacja** | Skok / pływanie w górę / wyjście na niski brzeg |
 | **2× W** lub lewy **Ctrl** | Sprint |
-| **Shift** | Kucanie |
+| **Shift** | Kucanie / wstanie z łóżka |
 | **LPM** | Kopanie / atak |
-| **PPM** | Postawienie bloku / użycie / osłona tarczą |
+| **PPM** | Postawienie bloku / użycie / osłona tarczą; przytrzymaj 1,6 s, aby zjeść |
 | **1–9** lub kółko myszy | Wybór pola podręcznego |
 | **E** | Ekwipunek |
 | **J / M / H** | Atlas / wymiary / pomoc |
 | **Q / Ctrl + Q** | Wyrzuć jedną sztukę / cały stos |
-| **R** | Jedzenie |
+| **R** | Przytrzymaj 1,6 s, aby zjeść przedmiot z dłoni |
 | **F** | Przełącz latanie w trybie kreatywnym |
 | **F5** | Pierwsza osoba → zza pleców → z przodu |
 | **Enter / T** | Czat tekstowy |
@@ -127,6 +139,10 @@ Wydobywanie zależy od twardości bloku i narzędzia. Kwiaty zrywa pojedynczy kl
 | **Escape** | Zamknij panel / menu pauzy |
 
 Klawisze możesz zmienić w ustawieniach. **E, J, M i H ponownie zamykają swój panel**, jeśli nie wpisujesz tekstu w polu wyszukiwania. Po powrocie gra przejmuje kursor; gdy przeglądarka wymaga dodatkowego kliknięcia, użyj **Wróć do sterowania** albo kliknij w świat.
+
+Aby jeść, wybierz jabłko lub chleb i przytrzymaj **PPM** albo **R** przez **1,6 s**. Ręka unosi jedzenie do ust; kolejnym kęsom towarzyszą dźwięki i okruszki, widoczne także po F5 oraz u innych graczy. Puszczenie przycisku, zmiana pola lub otwarcie panelu przerywa czynność bez zużycia jedzenia. Jeden przedmiot przywraca **6 punktów sytości**, do maksimum 20; zdrowie odzyskujesz później przez zwykłą regenerację. Przy pełnej sytości jedzenie nie jest zużywane. W multiplayer czas i odjęcie przedmiotu zatwierdza serwer.
+
+Przy powierzchni wody **przytrzymaj Spację i płyń w stronę niskiego brzegu**. Postać odbije się w górę i może wyjść na blok, półblok albo schody, jeśli ma miejsce nad głową. Ten ruch nie pozwala wspinać się po wysokiej ścianie ani przenikać przez sufit. Na telefonie użyj joysticka i przycisku skoku.
 
 PPM w grze i jej panelach nie otwiera menu przeglądarki. Sterowanie filtruje nieaktualne ruchy po przechwyceniu kursora i nagłe skoki danych wejściowych; komputer z ekranem dotykowym nadal obsługuje mysz. Obrażenia od mobów i pocisków uwzględniają ściany, a zderzenia pionowe mierzą faktyczny upadek. Krótki komunikat po otrzymaniu obrażeń pomaga rozpoznać ich przyczynę.
 
@@ -153,6 +169,8 @@ Piec ma osobne pola na surowiec, paliwo i wynik. **Shift + klik** wkłada surowi
 ### Granie na telefonie
 
 Lewy joystick porusza postacią, a przeciąganie po wolnej części świata obraca kamerę. Mocne wychylenie joysticka do przodu włącza sprint. Po prawej są przyciski ataku, budowania, skoku i kucania; hotbar wybierasz dotknięciem.
+
+Z jedzeniem w dłoni przytrzymaj przycisk używania przez 1,6 s; puszczenie palca przerywa jedzenie.
 
 W ekwipunku **przytrzymaj stos przez krótką chwilę i przeciągnij**, również w pionie. Szybkie przesunięcie palca w pionie przewija panel. Możesz też dotknąć stosu i pola docelowego. Przy krawędzi okna przeciągany przedmiot uruchamia przewijanie.
 

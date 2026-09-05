@@ -155,6 +155,24 @@ export class BlockParticles {
       ![7, 13, 15, 18].includes(id)
     );
   }
+  /** Food crumbs reuse the same bounded pool and opaque draw call as block fragments. */
+  crumbs(id: number, mouth: Point) {
+    if (![106, 107].includes(id) || !this.enabled || this.disposed || !validPoint(mouth)) return;
+    for (let i = 0; i < 4 && this.active < this.limit; i++) {
+      const p = this.spawn(2, mouth, true, false),
+        rnd = this.random;
+      p.x = mouth.x + (rnd() - 0.5) * 0.14;
+      p.y = mouth.y + (rnd() - 0.5) * 0.1;
+      p.z = mouth.z + (rnd() - 0.5) * 0.14;
+      p.vx = (rnd() - 0.5) * 0.8;
+      p.vy = 0.3 + rnd() * 0.55;
+      p.vz = (rnd() - 0.5) * 0.8;
+      p.sx = p.sy = p.sz = 0.018 + rnd() * 0.018;
+      p.duration = p.life = 0.3 + rnd() * 0.17;
+      p.kind = 0;
+      p.color.set(id === 106 ? (i % 2 ? "#f2d39b" : "#bd4b3c") : i % 2 ? "#eacb86" : "#a76836");
+    }
+  }
   private spawn(id: number, center: Point, chip: boolean, top: boolean) {
     const block = BLOCKS[id],
       p = this.pool[this.active++],

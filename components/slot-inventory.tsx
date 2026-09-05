@@ -4,6 +4,7 @@ import { ArrowRight, BookOpen, PackageOpen, Shield, Search, Trash2 } from "lucid
 import { InventoryAvatar } from "./skin-editor";
 import { GRID_RECIPES, type Stack } from "@/lib/inventory";
 import { BLOCKS, ITEMS, item } from "@/lib/blocks";
+import { canonicalBlock } from "@/lib/block-shapes";
 import type { Game, Snapshot } from "@/lib/engine";
 import { inventoryGesture } from "@/lib/inventory-actions";
 import { useSlotGestures } from "@/hooks/use-slot-gestures";
@@ -246,7 +247,7 @@ export default function SlotInventory({
           </div>
           <div className="mc-book-items">
             {catalog
-              ? [...BLOCKS.slice(1), ...ITEMS]
+              ? [...BLOCKS.filter((b) => b && b.id > 0 && canonicalBlock(b.id) === b.id), ...ITEMS]
                   .filter((b) =>
                     b.name.toLocaleLowerCase("pl").includes(query.toLocaleLowerCase("pl")),
                   )

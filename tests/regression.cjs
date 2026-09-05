@@ -121,6 +121,8 @@ function stubGame(w = new World()) {
   const g = Object.create(Game.prototype);
   Object.assign(g, {
     world: w,
+    mobs: [],
+    scene: new THREE.Scene(),
     settings: { ...DEFAULT_SETTINGS, bindings: { ...DEFAULT_BINDINGS } },
     keys: new Set(),
     mode: "survival",

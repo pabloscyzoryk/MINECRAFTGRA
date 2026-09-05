@@ -3,11 +3,15 @@ import type { MobKind } from "./entities";
 import type { Difficulty } from "./difficulty";
 import type { FurnaceState } from "./furnace";
 import type { Equipment } from "./armor";
+import type { CastleGuardState } from "./castles";
+import type { BedRest } from "./bed-rest";
+import type { EatingWire } from "./eating";
+export type { BedRest } from "./bed-rest";
 export type FurnaceWire = { key: string; state: FurnaceState | null; revision: number };
 export type { Difficulty } from "./difficulty";
 export type { HorrorEvent } from "./horror-director";
 export type { HuntWire, HuntPhase } from "./horror-hunt";
-export const PROTOCOL = 2;
+export const PROTOCOL = 3;
 export const SERVER_NAME = "Wspólny świat";
 export const MAX_PLAYERS = 16;
 export const FACE_FRAME_MAX_LENGTH = 400000;
@@ -36,6 +40,9 @@ export type PlayerWire = {
   health?: number;
   difficulty?: Difficulty;
   equipment?: Equipment;
+  bedRest?: BedRest | null;
+  bedRestRevision?: number;
+  eating?: EatingWire | null;
 };
 export type MobWire = {
   id: string;
@@ -54,6 +61,7 @@ export type MobWire = {
   anger?: number;
   eyeContact?: number;
   angerTarget?: string;
+  guard?: CastleGuardState;
   fuse: number;
   deathTime: number;
   timer: number;

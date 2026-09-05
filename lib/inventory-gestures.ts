@@ -1,4 +1,5 @@
 import { InventoryPack, maxStack, type Stack } from "./inventory";
+import { BLOCKS, ITEMS } from "./blocks";
 import { clickStack, type ChestSlots } from "./chest-slots";
 import { canInsertFurnaceSlot, furnaceFuelSeconds, furnaceRecipe } from "./furnace";
 
@@ -20,22 +21,17 @@ export function validSlotRef(value: unknown): value is SlotRef {
     v.index < (v.area === "slots" ? 36 : v.area === "grid" ? 9 : v.area === "furnace" ? 3 : 27)
   );
 }
+const knownItem = (id: number) =>
+  Number.isInteger(id) && id > 0 && (!!BLOCKS[id] || ITEMS.some((item) => item.id === id));
 function expectedStack(value: unknown) {
   if (value == null) return true;
   const s = value as Stack;
-  return (
-    Number.isInteger(s.id) &&
-    s.id > 0 &&
-    s.id <= 130 &&
-    Number.isInteger(s.n) &&
-    s.n > 0 &&
-    s.n <= maxStack(s.id)
-  );
+  return knownItem(s.id) && Number.isInteger(s.n) && s.n > 0 && s.n <= maxStack(s.id);
 }
 export function validGesture(value: unknown): value is InventoryGesture {
   if (!value || typeof value !== "object") return false;
   const g = value as InventoryGesture;
-  if (g.type === "collect") return Number.isInteger(g.id) && g.id > 0 && g.id <= 130;
+  if (g.type === "collect") return knownItem(g.id);
   if (g.type === "distribute")
     return (
       Array.isArray(g.slots) &&

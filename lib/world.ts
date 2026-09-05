@@ -1,5 +1,8 @@
 import { biomeSample, region } from "./biomes";
+import { castleSites, describeCastle, generateCastleChunk, type CastleDescriptor } from "./castles";
 import { BLOCKS, type Dimension } from "./blocks";
+import { pointInside, boxList } from "./block-shapes";
+import { bedPartner } from "./bed";
 export const SIZE = 16,
   HEIGHT = 72,
   WATER = 12;
@@ -32,11 +35,26 @@ export class World {
   onEdit?: (x: number, y: number, z: number) => void;
   dimension: Dimension = "overworld";
   seed = 24680;
+  private castleCache = new Map<string, CastleDescriptor>();
   constructor(seed = 24680) {
     this.seed = seed;
   }
   biomeInfo(x: number, z: number) {
     return biomeSample(x, z, this.seed).biome;
+  }
+  castlesNearby(x: number, z: number, radius = 96): CastleDescriptor[] {
+    if (this.dimension !== "overworld") return [];
+    return castleSites(this.seed, x, z, radius).map((site) => {
+      const key = this.seed + ":" + site.id;
+      let castle = this.castleCache.get(key);
+      if (!castle) {
+        castle = describeCastle(site, (x, z) => this.height(x, z));
+        if (this.castleCache.size >= 256)
+          this.castleCache.delete(this.castleCache.keys().next().value!);
+        this.castleCache.set(key, castle);
+      }
+      return castle;
+    });
   }
   biome(x: number, z: number) {
     if (this.dimension === "nether") return "Pustkowia Netheru";
@@ -48,6 +66,10 @@ export class World {
     return n < 0.34 ? "Kryształowe groty" : n > 0.62 ? "Bujne jaskinie" : "Jaskinie naciekowe";
   }
   biomeAt(x: number, y: number, z: number) {
+    if (this.dimension === "overworld") {
+      const castle = this.castlesNearby(x,z,0).find(c => x >= c.bounds.minX && x <= c.bounds.maxX && z >= c.bounds.minZ && z <= c.bounds.maxZ && y >= c.y - 1);
+      if (castle) return castle.name;
+    }
     return this.dimension === "overworld" && y < this.height(x, z) - 5
       ? this.caveType(x, z)
       : this.biome(x, z);
@@ -232,6 +254,8 @@ export class World {
       }
     this.structures(c);
     this.landmarks(c);
+    for (const castle of this.castlesNearby(ox + 7.5, oz + 7.5, 8))
+      generateCastleChunk(castle, c, this.seed);
     const prefix = this.dimension + ":";
     for (const [key, id] of Object.entries(this.edits)) {
       if (!key.startsWith(prefix)) continue;
@@ -285,7 +309,8 @@ export class World {
           box(x, base + 1, z + 3, 1, 2, 1, 0);
           for (let a = 0; a < 3; a++) box(x - 4 + a, base + 4 + a, z - 4, 9 - a * 2, 1, 9, 47);
           put(x - 2, base + 1, z - 2, 61);
-          put(x + 1, base + 1, z - 2, 62);
+          put(x + 1, base + 1, z - 1, 190);
+          put(x + 1, base + 1, z - 2, 194);
           put(x, base + 3, z, 48);
           for (let i = 0; i < 5; i++) box(x - 1, base - i, z + 4 + i, 3, 1, 1, 9);
         } else if (b.id === "mushroom" || b.id === "crystal") {
@@ -359,7 +384,8 @@ export class World {
         put(hx + 4, y + 1, hz + 1, 30);
         put(hx + 3, y + 3, hz + 3, 48);
         put(hx + 1, y + 1, hz + 4, 61);
-        put(hx + 4, y + 1, hz + 2, 62);
+        put(hx + 4, y + 1, hz + 3, 190);
+        put(hx + 4, y + 1, hz + 2, 194);
       }
       const wellY = this.height(4, 4);
       box(2, wellY, 2, 5, 1, 5, 40);
@@ -451,10 +477,17 @@ export class World {
   set(x: number, y: number, z: number, id: number, flow = false) {
     if (y <= 0 || y >= HEIGHT) return;
     const c = this.chunk(Math.floor(x / 16), Math.floor(z / 16));
+    const previous = this.get(x, y, z);
+    const partner = previous !== id ? bedPartner(previous, x, y, z) : null;
     this.raw(c, ((x % 16) + 16) % 16, y, ((z % 16) + 16) % 16, id);
     this.edits[this.dimension + ":" + x + "," + y + "," + z] = id;
     if (!flow) delete this.waterLevels[this.dimension + ":" + x + "," + y + "," + z];
     this.onEdit?.(x, y, z);
+    if (partner) {
+      this.chunk(Math.floor(partner.x / 16), Math.floor(partner.z / 16));
+      if (this.get(partner.x, partner.y, partner.z) === partner.id)
+        this.set(partner.x, partner.y, partner.z, 0, flow);
+    }
     c.dirty = true;
     for (const [dx, dz] of [
       [-1, 0],
@@ -515,11 +548,24 @@ export class World {
     return true;
   }
   solid(x: number, y: number, z: number) {
-    return !!BLOCKS[this.get(x, y, z)]?.solid;
+    const id = this.get(x, y, z);
+    return (
+      !!BLOCKS[id]?.solid &&
+      pointInside(id, x - Math.floor(x), y - Math.floor(y), z - Math.floor(z))
+    );
   }
   surface(x: number, z: number) {
     this.chunk(Math.floor(x / 16), Math.floor(z / 16));
-    for (let y = HEIGHT - 2; y >= 0; y--) if (this.solid(x, y, z)) return y + 1;
+    const fx = Number.isInteger(x) ? 0.5 : x - Math.floor(x),
+      fz = Number.isInteger(z) ? 0.5 : z - Math.floor(z);
+    for (let y = HEIGHT - 2; y >= 0; y--) {
+      const id = this.get(x, y, z);
+      if (!BLOCKS[id]?.solid) continue;
+      const tops = boxList(id)
+        .filter((b) => fx >= b[0] && fx <= b[3] && fz >= b[2] && fz <= b[5])
+        .map((b) => b[4]);
+      if (tops.length) return y + Math.max(...tops);
+    }
     return 1;
   }
   switch(d: Dimension) {

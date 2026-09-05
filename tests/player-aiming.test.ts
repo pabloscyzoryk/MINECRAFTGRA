@@ -168,7 +168,15 @@ test("Remote head pitch points toward the same look direction as the local playe
     profileClock: 0,
     uiClock: 0,
     remotes: new Map([
-      ["other", { model, wire, position: new THREE.Vector3(), label: { visible: true } }],
+      [
+        "other",
+        {
+          model,
+          wire,
+          position: new THREE.Vector3(),
+          label: { visible: true, position: new THREE.Vector3() },
+        },
+      ],
     ]),
     entities: new Map(),
     lastFrame: null,

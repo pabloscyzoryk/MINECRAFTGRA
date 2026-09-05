@@ -77,12 +77,14 @@ export class FluidSystem {
         const n = this.level(x + dx, y, z + dz);
         if (n === 0) sources++;
         if (n < 0 || n === 7) continue;
-        const supported = w.solid(x + dx, y - 1, z + dz) || this.level(x + dx, y - 1, z + dz) === 0;
+        // Fluids occupy whole voxel cells; a solid upper half also blocks downward flow.
+        const supported =
+          !!BLOCKS[w.get(x + dx, y - 1, z + dz)]?.solid || this.level(x + dx, y - 1, z + dz) === 0;
         if (!supported) continue;
         const candidate = n === 8 ? 1 : n + 1;
         if (candidate <= 7 && (desired < 0 || candidate < desired)) desired = candidate;
       }
-      if (sources >= 2 && w.solid(x, y - 1, z)) desired = 0;
+      if (sources >= 2 && BLOCKS[w.get(x, y - 1, z)]?.solid) desired = 0;
     }
     if (level === desired) return;
     const stateKey = this.key(x, y, z);

@@ -1,5 +1,5 @@
-'use client';
-import { useState, type CSSProperties } from 'react';
+"use client";
+import { useState, type CSSProperties } from "react";
 import {
   Compass,
   Check,
@@ -9,12 +9,13 @@ import {
   PackageOpen,
   Shield,
   Leaf,
-} from 'lucide-react';
-import { BIOMES } from '@/lib/biomes';
-import { item } from '@/lib/blocks';
-import type { Game, Snapshot } from '@/lib/engine';
+  Castle,
+} from "lucide-react";
+import { BIOMES } from "@/lib/biomes";
+import { item } from "@/lib/blocks";
+import type { Game, Snapshot } from "@/lib/engine";
 export function Journal({ game, snap }: { game: Game; snap: Snapshot }) {
-  const [tab, setTab] = useState<'atlas' | 'quests'>('atlas');
+  const [tab, setTab] = useState<"atlas" | "quests">("atlas");
   const data = snap.adventure;
   return (
     <div className="journal">
@@ -42,25 +43,41 @@ export function Journal({ game, snap }: { game: Game; snap: Snapshot }) {
         </div>
       </div>
       <div className="journal-tabs">
-        <button
-          className={tab === 'atlas' ? 'active' : ''}
-          onClick={() => setTab('atlas')}
-        >
+        <button className={tab === "atlas" ? "active" : ""} onClick={() => setTab("atlas")}>
           Atlas świata
         </button>
-        <button
-          className={tab === 'quests' ? 'active' : ''}
-          onClick={() => setTab('quests')}
-        >
+        <button className={tab === "quests" ? "active" : ""} onClick={() => setTab("quests")}>
           Twoja przygoda
         </button>
       </div>
-      {tab === 'atlas' ? (
+      {tab === "atlas" ? (
         <>
           <p className="journal-intro">
-            Wybierz kierunek. Każdy biom ma własny charakter, surowce i miejsce,
-            które warto odnaleźć.
+            Wybierz kierunek. Każdy biom ma własny charakter, surowce i miejsce, które warto
+            odnaleźć.
           </p>
+          <div className="journal-castle">
+            <Castle size={38} aria-hidden="true" />
+            <div>
+              <h3>Za murami czeka przygoda</h3>
+              <p>
+                Ogromne zamki, zrujnowane twierdze, zbrojownie i skarbce. Rycerze bronią bram oraz
+                dziedzińca — przygotuj się przed wyprawą.
+              </p>
+            </div>
+            <div className="biome-actions">
+              <button onClick={() => game.adventure.locateCastle()}>
+                <Compass size={14} />
+                Znajdź zamek
+              </button>
+              {snap.mode === "creative" && (
+                <button onClick={() => game.adventure.locateCastle(true)}>
+                  <ArrowUpRight size={14} />
+                  Odwiedź
+                </button>
+              )}
+            </div>
+          </div>
           <div className="biome-catalog">
             {BIOMES.map((b, i) => {
               const seen = data.discovered.includes(b.id);
@@ -68,12 +85,10 @@ export function Journal({ game, snap }: { game: Game; snap: Snapshot }) {
                 <article
                   className="biome-card"
                   key={b.id}
-                  style={{ '--biome': b.color } as CSSProperties}
+                  style={{ "--biome": b.color } as CSSProperties}
                 >
                   <div className="biome-art">
-                    <span className="biome-number">
-                      {String(i + 1).padStart(2, '0')}
-                    </span>
+                    <span className="biome-number">{String(i + 1).padStart(2, "0")}</span>
                     <i />
                     <i />
                     <i />
@@ -100,7 +115,7 @@ export function Journal({ game, snap }: { game: Game; snap: Snapshot }) {
                         <Compass size={14} />
                         Nawiguj
                       </button>
-                      {snap.mode === 'creative' && (
+                      {snap.mode === "creative" && (
                         <button
                           onClick={() => game.adventure.locate(b.id, true)}
                           title="Przenieś gracza do biomu"
@@ -116,8 +131,8 @@ export function Journal({ game, snap }: { game: Game; snap: Snapshot }) {
             })}
           </div>
           <p className="panel-footnote">
-            Pod powierzchnią: bujne jaskinie, groty ametystowe i jaskinie
-            naciekowe. Szukaj rud, świecących grzybów i przejść w skałach.
+            Pod powierzchnią: bujne jaskinie, groty ametystowe i jaskinie naciekowe. Szukaj rud,
+            świecących grzybów i przejść w skałach.
           </p>
         </>
       ) : (
@@ -125,17 +140,15 @@ export function Journal({ game, snap }: { game: Game; snap: Snapshot }) {
           {data.quests.map((q) => {
             const done = data.awards.includes(q.id);
             return (
-              <article key={q.id} className={done ? 'complete' : ''}>
-                <div className="quest-icon">
-                  {done ? <Check /> : <Trophy />}
-                </div>
+              <article key={q.id} className={done ? "complete" : ""}>
+                <div className="quest-icon">{done ? <Check /> : <Trophy />}</div>
                 <div>
                   <h3>{q.name}</h3>
                   <p>{q.description}</p>
                   <div className="quest-progress">
                     <i
                       style={{
-                        width: Math.min(100, (q.value / q.target) * 100) + '%',
+                        width: Math.min(100, (q.value / q.target) * 100) + "%",
                       }}
                     />
                   </div>
@@ -180,12 +193,9 @@ export function ChestPanel({ game, snap }: { game: Game; snap: Snapshot }) {
             <button
               key={id}
               onClick={() => game.adventure.transfer(id, toChest)}
-              title={(toChest ? 'Włóż: ' : 'Zabierz: ') + b.name}
+              title={(toChest ? "Włóż: " : "Zabierz: ") + b.name}
             >
-              <span
-                className="chest-item-cube"
-                style={{ background: b.color }}
-              />
+              <span className="chest-item-cube" style={{ background: b.color }} />
               <b>{b.name}</b>
               <small>×{n}</small>
             </button>
@@ -203,9 +213,7 @@ export function ChestPanel({ game, snap }: { game: Game; snap: Snapshot }) {
           <PackageOpen size={19} />
           Zawartość skrzyni
         </h3>
-        <button onClick={() => game.adventure.takeAll()}>
-          Zabierz wszystko
-        </button>
+        <button onClick={() => game.adventure.takeAll()}>Zabierz wszystko</button>
       </div>
       {grid(storage, false)}
       <h3>
@@ -214,8 +222,8 @@ export function ChestPanel({ game, snap }: { game: Game; snap: Snapshot }) {
       </h3>
       {grid(snap.inventory, true)}
       <p className="panel-footnote">
-        Kliknij przedmiot, aby przenieść cały stos. Każda skrzynia zachowuje
-        własną zawartość w zapisie świata.
+        Kliknij przedmiot, aby przenieść cały stos. Każda skrzynia zachowuje własną zawartość w
+        zapisie świata.
       </p>
     </div>
   );

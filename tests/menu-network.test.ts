@@ -25,6 +25,9 @@ function client() {
       crouching: true,
       swingTime: 0.1,
       rightDown: true,
+      eatingHeld() {
+        return this.rightDown;
+      },
       hotbar: [126, 0, 0, 0, 0, 0, 0, 0, 0],
       selected: 0,
       pack,
@@ -92,14 +95,14 @@ test("Every menu keeps sending changing physics positions but suppresses stale m
     const input = c.sent.at(-1);
     assert.deepEqual(input.p, c.game.position.toArray());
     assert.equal(input.active, false);
-    for (const flag of ["moving", "sprinting", "crouch", "swing", "blocking"])
+    for (const flag of ["moving", "sprinting", "crouch", "swing", "blocking", "usingFood"])
       assert.equal(input[flag], false, reason + ":" + flag);
     assert.equal(input.swingProgress, -1);
     assert.equal(input.grounded, false);
   }
   c.game.active = true;
   c.net.sendInput();
-  for (const flag of ["active", "moving", "sprinting", "crouch", "swing", "blocking"])
+  for (const flag of ["active", "moving", "sprinting", "crouch", "swing", "blocking", "usingFood"])
     assert.equal(c.sent.at(-1)[flag], true);
 });
 

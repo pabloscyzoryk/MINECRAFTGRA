@@ -1,6 +1,10 @@
+import { paintBedTiles, bedFaceTile, bedFaceUV } from "./bed-texture";
+import { appendCactusSpines } from "./cactus-mesh";
+import { SHAPES, blockTexture, shapeFaces, exposedFace, faceUV } from "./block-shapes";
 import * as THREE from "three";
 import { BLOCKS } from "./blocks";
 import { World, HEIGHT, type Chunk, hash } from "./world";
+import { CHEST_TILES, CHEST_FACE_TILES, drawChestFace, type ChestFace } from "./chest-texture";
 
 export const CLOUD_CELL_SIZE = 220;
 export const CLOUD_FIELD_SIZE = CLOUD_CELL_SIZE * 3;
@@ -107,6 +111,14 @@ export function createAtlas() {
       ctx.fillStyle = i === 43 ? "#4a4840" : "#00000035";
       for (let x = 3; x < 32; x += 7) ctx.fillRect(ox + x, oy + hash(x, i) * 9, 2, 17);
     }
+    if (i === 41) {
+      for (let x = 2; x < 32; x += 8) {
+        ctx.fillStyle = "#375834"; ctx.fillRect(ox + x, oy, 2, 32);
+        ctx.fillStyle = "#8fac61"; ctx.fillRect(ox + x + 2, oy, 2, 32);
+      }
+      ctx.fillStyle = "#d9d4a0";
+      for (let y = 5; y < 32; y += 10) for (let x = 8; x < 32; x += 14) ctx.fillRect(ox + x, oy + y, 2, 2);
+    }
     if (i === 255) {
       ctx.strokeStyle = "#6e513a";
       for (let j = 3; j < 16; j += 4) ctx.strokeRect(ox + j, oy + j, 32 - j * 2, 32 - j * 2);
@@ -208,7 +220,7 @@ export function createAtlas() {
       }
     }
   }
-  for (const block of BLOCKS) {
+  for (const block of BLOCKS.filter(Boolean)) {
     const i = block.id,
       ox = (i % 16) * 32,
       oy = Math.floor(i / 16) * 32;
@@ -250,15 +262,6 @@ export function createAtlas() {
         }
       }
     }
-    if (i === 61) {
-      ctx.fillStyle = "#49351f";
-      ctx.fillRect(ox, oy + 10, 32, 3);
-      ctx.fillRect(ox, oy, 32, 2);
-      ctx.fillStyle = "#dfca87";
-      ctx.fillRect(ox + 13, oy + 10, 6, 9);
-      ctx.fillStyle = "#664d2a";
-      ctx.fillRect(ox + 15, oy + 13, 2, 3);
-    }
     if (i === 62) {
       ctx.fillStyle = "#e6dfce";
       ctx.fillRect(ox + 2, oy + 1, 28, 11);
@@ -281,6 +284,9 @@ export function createAtlas() {
       ctx.strokeRect(ox + 13, oy + 12, 6, 8);
     }
   }
+  for (const [face, tile] of Object.entries(CHEST_TILES))
+    drawChestFace(ctx, face as ChestFace, (tile % 16) * 32, Math.floor(tile / 16) * 32);
+  paintBedTiles(ctx);
   const texture = new THREE.CanvasTexture(canvas);
   texture.magFilter = THREE.NearestFilter;
   texture.minFilter = THREE.NearestMipmapLinearFilter;
@@ -349,6 +355,7 @@ const faces = [
     s: 0.73,
   },
 ];
+const fullCubeFaces = shapeFaces(1);
 export class WorldRenderer {
   world = new World();
   scene = new THREE.Scene();
@@ -366,6 +373,7 @@ export class WorldRenderer {
   raf = 0;
   time = 0;
   preview = true;
+  previewVisible = true;
   radius = 4;
   private offsetRadius = -1;
   private chunkOffsets: [number, number][] = [];
@@ -543,7 +551,7 @@ export class WorldRenderer {
       for (let z = 0; z < 16; z++)
         for (let x = 0; x < 16; x++) {
           const id = c.data[x + z * 16 + y * 256];
-          if (!id) continue;
+          if (!id || !BLOCKS[id]) continue;
           const block = BLOCKS[id],
             type = block.plant ? 4 : id === 7 ? 3 : block.glow ? 2 : block.transparent ? 1 : 0,
             b = buckets[type];
@@ -577,9 +585,13 @@ export class WorldRenderer {
             }
             continue;
           }
+          if (id === 41) appendCactusSpines(b, ox + x, y, oz + z);
           const top = y + 2 < HEIGHT ? c.data[x + z * 16 + (y + 2) * 256] : 0;
-          const overheadShade = top && BLOCKS[top].solid ? 0.97 : 1;
-          for (let fi = 0; fi < 6; fi++) {
+          const overheadShade = top && BLOCKS[top]?.solid ? 0.97 : 1;
+          const shape = SHAPES[id],
+            isBed = shape?.kind === "bed";
+          for (const sourceFace of shape ? shapeFaces(id) : fullCubeFaces) {
+            const fi = sourceFace.face;
             const f = faces[fi],
               nx = x + f.d[0],
               ny = y + f.d[1],
@@ -588,39 +600,59 @@ export class WorldRenderer {
               nx >= 0 && nx < 16 && nz >= 0 && nz < 16 && ny >= 0 && ny < HEIGHT
                 ? c.data[nx + nz * 16 + ny * 256]
                 : this.world.get(ox + nx, ny, oz + nz);
-            if (next === id || (next && BLOCKS[next].solid && !BLOCKS[next].transparent)) continue;
-            let tile = id;
-            if (fi === 2) {
-              if (id === 1) tile = 254;
-              if ([5, 25, 43, 47, 49, 52, 76].includes(id)) tile = 255;
+            const occluder =
+              next === id || (BLOCKS[next]?.solid && !BLOCKS[next]?.transparent) ? next : 0;
+            const boundary =
+              !shape || sourceFace.vertices[0][Math.floor(fi / 2)] === (fi % 2 === 0 ? 1 : 0);
+            // Most terrain faces touch air or another full cube; neither needs rectangle clipping.
+            if (
+              occluder &&
+              boundary &&
+              (!SHAPES[occluder] || SHAPES[occluder].kind === "double-slab")
+            )
+              continue;
+            const clipped = occluder && boundary ? exposedFace(sourceFace, occluder) : null;
+            for (let part = 0; part < (clipped?.length ?? 1); part++) {
+              const visible = clipped ? clipped[part] : sourceFace;
+              let tile =
+                id === 61 ? CHEST_FACE_TILES[fi] : isBed ? bedFaceTile(id, fi) : blockTexture(id);
+              if (fi === 2) {
+                if (id === 1) tile = 254;
+                if ([5, 25, 43, 47, 49, 52, 76].includes(id)) tile = 255;
+              }
+              const u = (tile % 16) / 16,
+                v = 1 - Math.floor(tile / 16) / 16,
+                eps = 0.001;
+              const base = b.p.length / 3;
+              for (let k = 0; k < 4; k++) {
+                const corner = visible.vertices[k];
+                b.p.push(
+                  ox + x + corner[0],
+                  y +
+                    corner[1] -
+                    (id === 7 && corner[1] === 1
+                      ? this.waterCorner(ox + x + corner[0], y, oz + z + corner[2])
+                      : 0),
+                  oz + z + corner[2],
+                );
+                b.n.push(...f.d);
+                if (!shape && !clipped) {
+                  b.uv.push(
+                    u + (k >= 2 ? 0.0625 - eps : eps),
+                    v - (k === 0 || k === 3 ? 0.0625 - eps : eps),
+                  );
+                } else {
+                  const uv = isBed ? bedFaceUV(id, fi, corner) : faceUV(fi, corner);
+                  b.uv.push(
+                    u + eps + uv[0] * (0.0625 - 2 * eps),
+                    v - 0.0625 + eps + uv[1] * (0.0625 - 2 * eps),
+                  );
+                }
+                const shade = block.glow ? 1 : f.s * overheadShade;
+                b.col.push(shade, shade, shade);
+              }
+              b.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
             }
-            const u = (tile % 16) / 16,
-              v = 1 - Math.floor(tile / 16) / 16,
-              eps = 0.001;
-            const uvs = [
-                [u + eps, v - 0.0625 + eps],
-                [u + eps, v - eps],
-                [u + 0.0625 - eps, v - eps],
-                [u + 0.0625 - eps, v - 0.0625 + eps],
-              ],
-              base = b.p.length / 3;
-            for (let k = 0; k < 4; k++) {
-              const corner = f.v[k];
-              b.p.push(
-                ox + x + corner[0],
-                y +
-                  corner[1] -
-                  (id === 7 && corner[1] === 1
-                    ? this.waterCorner(ox + x + corner[0], y, oz + z + corner[2])
-                    : 0),
-                oz + z + corner[2],
-              );
-              b.n.push(...f.d);
-              b.uv.push(...uvs[k]);
-              const shade = block.glow ? 1 : f.s * overheadShade;
-              b.col.push(shade, shade, shade);
-            }
-            b.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
           }
         }
     for (let i = 0; i < 5; i++) {
@@ -691,6 +723,7 @@ export class WorldRenderer {
     const now = performance.now() / 1000,
       dt = Math.min(0.045, this.time ? now - this.time : 0.016);
     this.time = now;
+    if (this.preview && !this.previewVisible) return;
     if (this.preview) {
       this.camera.position.set(30 + Math.sin(now * 0.045) * 9, 30, 39 + Math.cos(now * 0.045) * 8);
       this.camera.lookAt(0, 17, -5);

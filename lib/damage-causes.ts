@@ -2,6 +2,7 @@ export const DAMAGE_CAUSES = {
   fall: "Upadek z wysokości",
   drowning: "Brak powietrza pod wodą",
   lava: "Lawa",
+  cactus: "Kolce kaktusa",
   fire: "Ogień",
   void: "Upadek poza świat",
   hunger: "Głód — zjedz coś",

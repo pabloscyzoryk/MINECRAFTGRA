@@ -1,3 +1,4 @@
+import { SHAPES, canonicalBlock } from "./block-shapes";
 import { BLOCKS } from "./blocks";
 
 export type MiningTool = "hand" | "pickaxe" | "axe" | "shovel" | "hoe" | "shears" | "sword";
@@ -122,6 +123,8 @@ export const MINING_RULES: Record<number, MiningRule> = {
   98: rule(0.8, "pickaxe", 1),
   99: rule(50, "pickaxe", 4),
 };
+for (const [id, shape] of Object.entries(SHAPES))
+  MINING_RULES[Number(id)] = MINING_RULES[shape.base];
 export const TOOL_RULES: Record<number, ToolRule> = {
   101: { kind: "pickaxe", speed: 2, tier: 1 },
   102: { kind: "pickaxe", speed: 4, tier: 2 },
@@ -199,5 +202,7 @@ export function minedResource(block: number): { id: number; n: number } {
     93: [133, 1],
   };
   const result = resources[block];
+  if (SHAPES[block])
+    return { id: canonicalBlock(block), n: SHAPES[block].kind === "double-slab" ? 2 : 1 };
   return result ? { id: result[0], n: result[1] } : { id: block, n: 1 };
 }

@@ -38,7 +38,7 @@ export const ACTION_LABELS: Record<Action, string> = {
   dimensions: "Wymiary",
   help: "Pomoc",
   fly: "Przełącz latanie",
-  eat: "Zjedz przedmiot",
+  eat: "Jedz (przytrzymaj)",
   drop: "Wyrzuć przedmiot (Ctrl: cały stos)",
   perspective: "Perspektywa kamery",
   slot1: "Pole 1",
@@ -110,7 +110,11 @@ export const DEFAULT_SETTINGS: GameSettings = {
   bindings: { ...DEFAULT_BINDINGS },
 };
 export const SHADERS: { id: ShaderStyle; name: string; description: string }[] = [
-  { id: "off", name: "Wyłączone", description: "Proste oświetlenie, bez filtrów i efektów ekranu." },
+  {
+    id: "off",
+    name: "Wyłączone",
+    description: "Proste oświetlenie, bez filtrów i efektów ekranu.",
+  },
   {
     id: "classic",
     name: "Klasyczny",

@@ -1,4 +1,7 @@
 import * as THREE from "three";
+import { canonicalBlock } from "./block-shapes";
+import type { BedRest } from "./bed-rest";
+import { EAT_DURATION, eatingBite, validEatingWire } from "./eating";
 import type { Game } from "./engine";
 import { Mob, cube, mat } from "./entities";
 import { SkinModel, readSkin, defaultSkin } from "./skin-model";
@@ -27,6 +30,8 @@ type Remote = {
   position: THREE.Vector3;
   skinKey: string;
   swingTime?: number;
+  eatProgress?: number;
+  eatBite?: number;
 };
 export class Multiplayer {
   socket: WebSocket | null = null;
@@ -40,6 +45,13 @@ export class Multiplayer {
   horrorClock = 0;
   huntClock = 0;
   damageNoticeAt = -Infinity;
+  bedRestRevision = -1;
+  eatSession: string | null = null;
+  eatStartReq: string | null = null;
+  eatFinishReq: string | null = null;
+  eatGeneration = 0;
+  eatFinishWanted = false;
+  eatRetryAt = 0;
   difficulty: Difficulty;
   ping = 0;
   nick: string;
@@ -166,6 +178,8 @@ export class Multiplayer {
           this.voice.blur();
           this.game.horror?.clear();
           this.game.horrorThreat = null;
+          this.clearBedRest();
+          this.clearEating();
           this.game.emit();
         }
         if (!this.closed && !this.fatal) {
@@ -201,9 +215,15 @@ export class Multiplayer {
   request(command: Record<string, unknown>, callback?: (data: any) => void) {
     if (
       this.chestBusy &&
-      !["inventoryGesture", "settleInventory", "armor", "equipArmor", "environmentDamage"].includes(
-        String(command.type),
-      )
+      ![
+        "inventoryGesture",
+        "settleInventory",
+        "armor",
+        "equipArmor",
+        "environmentDamage",
+        "restEnd",
+        "eatCancel",
+      ].includes(String(command.type))
     )
       return "";
     if (!this.connected) {
@@ -221,6 +241,15 @@ export class Multiplayer {
   receive(data: any) {
     if (this.closed) return;
     const g = this.game;
+    if (data.type === "eating") {
+      const session = this.eatSession ?? this.eatStartReq;
+      if (data.state === null && session && data.session === session) this.clearEating();
+      return;
+    }
+    if (data.type === "bedRest") {
+      this.applyBedRest(data.state, data.revision, data.p, data.yaw, data.clock);
+      return;
+    }
     if (data.type === "horrorReset") {
       g.horror?.clear();
       g.horrorThreat = null;
@@ -301,6 +330,9 @@ export class Multiplayer {
       return;
     }
     if (data.type === "welcome") {
+      this.clearEating();
+      this.clearBedRest();
+      this.bedRestRevision = -1;
       g.horrorThreat = null;
       this.clearRemoteFaces();
       this.faceLastSent = -Infinity;
@@ -378,6 +410,14 @@ export class Multiplayer {
         this.inventoryQueue = [];
         g.pause("death");
       }
+      if (data.player)
+        this.applyBedRest(
+          data.player.bedRest ?? null,
+          data.player.bedRestRevision ?? 0,
+          data.player.p,
+          data.player.yaw,
+          data.clock,
+        );
       this.sendInput();
       this.sendFaceFrame(g.faceCamera?.latestFrame ?? null);
       for (const p of this.pending.values()) {
@@ -416,6 +456,9 @@ export class Multiplayer {
       this.clock = data.clock;
       if (Number.isFinite(data.horrorClock)) this.horrorClock = data.horrorClock;
       this.players = data.players;
+      const owner = this.players.find((player) => player.id === this.id);
+      if (owner)
+        this.applyBedRest(owner.bedRest ?? null, owner.bedRestRevision ?? 0, owner.p, owner.yaw);
       this.stamina = data.combat?.[this.id]?.stamina ?? this.stamina;
       this.protection = data.combat?.[this.id]?.protection ?? 0;
       for (const [dimension, x, y, z, id, level] of data.changes) {
@@ -465,6 +508,8 @@ export class Multiplayer {
         g.adventure.data.equipment = normalizeEquipment(data.equipment);
         g.adventure.data.armor = g.adventure.data.equipment.chest;
       }
+      if (Object.hasOwn(data, "bedRest"))
+        this.applyBedRest(data.bedRest, data.bedRestRevision, data.p, data.yaw, data.clock);
       if (data.ok) {
         if (!data.pack && currentPack) {
           for (const [id, n] of data.cost ?? [])
@@ -472,14 +517,19 @@ export class Multiplayer {
           g.syncPack();
           for (const [id, n] of data.grant ?? []) g.add(id, n);
         }
-        if (typeof data.food === "number") g.food = data.food;
+        if (currentPack && typeof data.food === "number") g.food = data.food;
         if (data.xp) g.xp += data.xp;
         if (data.mined) g.mined++;
         if (data.placed) g.placed++;
         if (typeof data.health === "number") g.health = data.health;
         if (data.message) g.notify(data.message);
-        if (data.bed)
-          g.adventure.data.spawn = { x: g.position.x, y: g.position.y, z: g.position.z };
+        if (
+          data.spawn &&
+          (!Object.hasOwn(data, "bedRest") ||
+            Number(data.bedRestRevision) >= this.bedRestRevision) &&
+          [data.spawn.x, data.spawn.y, data.spawn.z].every(Number.isFinite)
+        )
+          g.adventure.data.spawn = { x: data.spawn.x, y: data.spawn.y, z: data.spawn.z };
         g.emit();
       } else if (data.message) g.notify(data.message);
       if (data.chest) {
@@ -501,6 +551,8 @@ export class Multiplayer {
       return;
     }
     if (data.type === "damage") {
+      this.clearEating();
+      this.clearBedRest();
       this.inventoryRevision = Math.max(
         this.inventoryRevision,
         Number(data.inventoryRevision) || 0,
@@ -568,6 +620,120 @@ export class Multiplayer {
       this.game.notify("Poczekaj na zakończenie przenoszenia przedmiotów.");
     return req;
   }
+  clearBedRest() {
+    if (this.game.rest) this.game.endRest(true);
+  }
+  clearEating() {
+    this.eatGeneration = (this.eatGeneration ?? 0) + 1;
+    this.eatSession = this.eatStartReq = this.eatFinishReq = null;
+    this.eatFinishWanted = false;
+    this.eatRetryAt = 0;
+    if (this.game.eating) this.game.applyEatingState(null, null);
+  }
+  startEating() {
+    const g = this.game;
+    if (!g.eating || !g.eatingHeld() || this.eatSession || this.eatStartReq) return "";
+    const id = g.eating.id,
+      generation = ++this.eatGeneration;
+    this.eatFinishWanted = false;
+    const req = this.request({ type: "eatStart" }, (data) => {
+      if (this.closed || generation !== this.eatGeneration) return;
+      this.eatStartReq = null;
+      if (
+        !data.ok ||
+        !validEatingWire(data.eating) ||
+        data.eatSession !== req ||
+        data.eating.id !== id
+      ) {
+        this.clearEating();
+        return;
+      }
+      this.eatSession = data.eatSession;
+      if (!g.eatingHeld() || g.hotbar[g.selected] !== id) {
+        this.cancelEating();
+        return;
+      }
+      g.applyEatingState(data.eating, data.eatSession);
+      if (this.eatFinishWanted) this.finishEating();
+    });
+    this.eatStartReq = req || null;
+    if (!req) this.clearEating();
+    return req;
+  }
+  cancelEating() {
+    const session = this.eatSession ?? this.eatStartReq;
+    this.clearEating();
+    if (session && this.connected && !this.closed)
+      return this.request({ type: "eatCancel", session });
+    return "";
+  }
+  finishEating() {
+    this.eatFinishWanted = true;
+    if (!this.eatSession || this.eatFinishReq || performance.now() < this.eatRetryAt) return "";
+    if (!this.game.eatingHeld()) return this.cancelEating();
+    const session = this.eatSession,
+      generation = this.eatGeneration;
+    const req = this.request({ type: "eatFinish", session }, (data) => {
+      if (this.closed || generation !== this.eatGeneration || session !== this.eatSession) return;
+      this.eatFinishReq = null;
+      if (data.ok || !validEatingWire(data.eating) || data.eatSession !== session)
+        this.clearEating();
+      else {
+        this.eatRetryAt =
+          performance.now() +
+          Math.max(120, Math.min(EAT_DURATION * 1000, Number(data.retryAfterMs) || 120));
+        this.game.applyEatingState(data.eating, session);
+      }
+    });
+    this.eatFinishReq = req || null;
+    return req;
+  }
+  /** Rest state has its own revision: an old cached use ACK must never put a player back in bed. */
+  applyBedRest(
+    state: BedRest | null,
+    revision: unknown,
+    position?: Readonly<Vec>,
+    yaw?: number,
+    clock?: number,
+  ) {
+    const g = this.game;
+    if (
+      !Number.isSafeInteger(revision) ||
+      Number(revision) < 0 ||
+      Number(revision) < (this.bedRestRevision ?? -1)
+    )
+      return;
+    const current = Number(revision) === this.bedRestRevision;
+    if (state && (g.health <= 0 || state.dimension !== g.world.dimension)) return;
+    if (Number.isFinite(clock)) {
+      this.clock = Math.max(this.clock || 0, clock!);
+      g.clock = Math.max(g.clock || 0, clock!);
+    }
+    if (current) {
+      if (state && g.rest?.key === state.key) {
+        const completed = state.nightSkipped && !g.rest.nightSkipped;
+        g.rest.elapsed = Math.max(g.rest.elapsed, state.elapsed);
+        g.rest.nightSkipped ||= state.nightSkipped;
+        if (completed) g.emit();
+      }
+      return;
+    }
+    this.bedRestRevision = Number(revision);
+    if (state) this.cancelEating();
+    const validPosition =
+      Array.isArray(position) && position.length === 3 && position.every(Number.isFinite)
+        ? position
+        : undefined;
+    g.applyRestState(state ? structuredClone(state) : null, validPosition);
+    if (Number.isFinite(yaw)) g.yaw = yaw!;
+    g.emit();
+    this.emit();
+  }
+  endRest() {
+    if (!this.game.rest || [...this.pending.values()].some((p) => p.command.type === "restEnd"))
+      return "";
+    return this.request({ type: "restEnd" });
+  }
   sendInput() {
     const g = this.game;
     const active =
@@ -587,6 +753,7 @@ export class Multiplayer {
       swingProgress: active && g.swingTime > 0 ? 1 - g.swingTime / SWING_DURATION : -1,
       held: g.hotbar[g.selected] ?? 0,
       blocking: active && g.rightDown,
+      usingFood: active && g.eatingHeld(),
       grounded: g.grounded,
       armor: g.adventure.data.armor,
     });
@@ -659,14 +826,31 @@ export class Multiplayer {
       );
       r.model.group.rotation.y += angle * (1 - Math.exp(-dt * 15));
       r.swingTime = Math.max(0, (r.swingTime ?? 0) - dt);
+      r.eatProgress =
+        validEatingWire(r.wire.eating) && r.wire.held === r.wire.eating.id && !r.wire.bedRest
+          ? Math.min(1, Math.max(0, r.eatProgress ?? r.wire.eating.progress) + dt / EAT_DURATION)
+          : -1;
       r.model.pose(
         this.clock,
         r.wire.moving,
         r.wire.crouch,
         r.swingTime ? 1 - r.swingTime / SWING_DURATION : -1,
+        r.eatProgress,
       );
       r.model.head.rotation.x = -r.wire.pitch;
+      r.model.setBedRest(r.wire.bedRest);
+      r.label.position.set(0, r.wire.bedRest ? 1 : 2.3, r.wire.bedRest ? 1 : 0);
       r.label.visible = r.model.group.visible;
+      if (validEatingWire(r.wire.eating) && r.eatProgress >= 0) {
+        const bite = eatingBite(r.eatProgress),
+          previous = r.eatBite ?? eatingBite(r.wire.eating.progress);
+        r.eatBite = bite;
+        if (bite > previous && r.model.group.visible)
+          g.spawnEatingCrumbs(
+            r.wire.eating.id,
+            r.model.group.localToWorld(new THREE.Vector3(0, 1.625, 0.29)),
+          );
+      } else r.eatBite = -1;
     }
     for (const m of this.entities.values()) {
       const target = m.group.userData.target as Vec | undefined;
@@ -735,6 +919,20 @@ export class Multiplayer {
         if (skin) this.loadRemoteSkin(r, skin);
       }
       r.model.setHeldItem(p.held);
+      if (validEatingWire(p.eating) && p.held === p.eating.id && !p.bedRest) {
+        const previous = r.wire.eating;
+        const restarted =
+          !validEatingWire(previous) ||
+          previous.id !== p.eating.id ||
+          p.eating.progress + 0.15 < previous.progress;
+        if (restarted || r.eatBite === undefined) r.eatBite = eatingBite(p.eating.progress);
+        r.eatProgress = restarted
+          ? p.eating.progress
+          : Math.max(p.eating.progress, r.eatProgress ?? 0);
+      } else {
+        r.eatProgress = -1;
+        r.eatBite = -1;
+      }
       if (p.swing) {
         const progress = p.swingProgress ?? 0;
         const previous = r.wire.swingProgress ?? 0;
@@ -794,6 +992,7 @@ export class Multiplayer {
         heading: w.heading,
         attackClock: w.attackClock,
         rangedAttack: !!w.rangedAttack,
+        guard: w.guard,
         hurt: w.hurt,
         anger: Math.max(0, Math.min(30, Number(w.anger) || 0)),
         fuse: w.fuse,
@@ -875,8 +1074,9 @@ export class Multiplayer {
     const g = this.game,
       t = g.target,
       id = g.hotbar[g.selected];
-    if (id === 126) return true;
-    if ([106, 107, 105].includes(id)) return false;
+    const usingBed = t && canonicalBlock(t.id) === 62;
+    if (!usingBed && id === 126) return true;
+    if (!usingBed && [106, 107, 105].includes(id)) return false;
     if (!t) return false;
     if (t.id === 29) {
       this.openFurnace(t.x, t.y, t.z);
@@ -890,11 +1090,19 @@ export class Multiplayer {
       this.openChest(t.x, t.y, t.z);
       return true;
     }
-    if (id > 0 && !g.inventory[id] && t.id !== 62) {
+    if (id > 0 && !g.inventory[id] && canonicalBlock(t.id) !== 62) {
       g.notify("Nie masz tego przedmiotu.");
       return true;
     }
-    this.request({ type: "use", x: t.x, y: t.y, z: t.z, place: [t.px, t.py, t.pz] });
+    this.request({
+      type: "use",
+      x: t.x,
+      y: t.y,
+      z: t.z,
+      place: [t.px, t.py, t.pz],
+      point: t.point,
+      normal: t.normal,
+    });
     g.actionCooldown = 0.25;
     return true;
   }
@@ -927,7 +1135,7 @@ export class Multiplayer {
       });
     for (const [id, r] of this.remotes)
       if (r.wire.dimension === g.world.dimension)
-        test(r.model.group.position.clone().add(new THREE.Vector3(0, 1, 0)), 0.68, {
+        test(r.model.group.localToWorld(new THREE.Vector3(0, 1, 0)), 0.68, {
           type: "pvp",
           target: id,
         });
@@ -1207,6 +1415,8 @@ export class Multiplayer {
     if (this.closed) return;
     const ownsSession = this.game.net === this || this.game.net === undefined;
     if (ownsSession) {
+      this.clearEating();
+      this.clearBedRest();
       this.game.horror?.clear();
       this.game.horrorThreat = null;
     }

@@ -11,7 +11,7 @@ import {
 import { InventoryPack, maxStack } from "../lib/inventory";
 
 test("Every block and existing tool has a finite, nonnegative mining rule or explicit protection", () => {
-  for (const block of BLOCKS) {
+  for (const block of BLOCKS.filter(Boolean)) {
     assert(MINING_RULES[block.id], block.name);
     for (const held of [0, ...ITEMS.map((item) => item.id)]) {
       const seconds = miningDuration(block.id, held);

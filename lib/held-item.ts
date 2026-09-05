@@ -1,14 +1,38 @@
 import * as THREE from "three";
 import { BLOCKS, ITEMS, item } from "./blocks";
 import { itemArt } from "./item-art";
+import { canonicalBlock, SHAPES, visualBoxList } from "./block-shapes";
+import { BED_PALETTE } from "./bed-texture";
+import { CACTUS_SPINES } from "./cactus-mesh";
 
 export type HeldTextureFactory = (id: number) => THREE.Texture;
+
+let cactusGeometry: THREE.BufferGeometry | null = null;
+let cactusGeometryUsers = 0;
+function acquireCactusSpines() {
+  if (!cactusGeometry) {
+    const positions: number[] = [],
+      normals: number[] = [];
+    for (const triangle of CACTUS_SPINES)
+      for (const point of triangle.points) {
+        positions.push((point[0] - 0.5) * 0.3, (point[1] - 0.5) * 0.3, (point[2] - 0.5) * 0.3);
+        normals.push(...triangle.normal);
+      }
+    cactusGeometry = new THREE.BufferGeometry();
+    cactusGeometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    cactusGeometry.setAttribute("normal", new THREE.Float32BufferAttribute(normals, 3));
+    cactusGeometry.computeBoundingSphere();
+  }
+  cactusGeometryUsers++;
+  return cactusGeometry;
+}
 
 /** Geometry is centered on its grip, so every view can attach the same object to a wrist. */
 export class HeldItemModel {
   group = new THREE.Group();
   id = 0;
   private disposed = false;
+  private cactusSpines: THREE.BufferGeometry | null = null;
   constructor(
     private textureFactory: HeldTextureFactory = (id) =>
       new THREE.TextureLoader().load(itemArt(id)),
@@ -17,6 +41,7 @@ export class HeldItemModel {
     this.group.visible = false;
   }
   set(id: number) {
+    id = canonicalBlock(id);
     id = Number.isInteger(id) && (BLOCKS[id] || ITEMS.some((entry) => entry.id === id)) ? id : 0;
     if (this.disposed || this.id === id) return;
     this.clear();
@@ -55,7 +80,102 @@ export class HeldItemModel {
       this.group.add(mesh);
       return mesh;
     };
-    if (id < BLOCKS.length) {
+    if (id === 62) {
+      const bed = new THREE.Group();
+      bed.name = "held-bed";
+      const scale = 0.27;
+      for (const block of [190, 194]) {
+        const offsetZ = block === 194 ? -1 : 0;
+        visualBoxList(block).forEach((b, index) => {
+          const mattress = b[1] >= 0.3;
+          const part = box(
+            ((b[0] + b[3]) / 2 - 0.5) * scale,
+            ((b[1] + b[4]) / 2 - 0.25) * scale,
+            ((b[2] + b[5]) / 2 + offsetZ) * scale,
+            (b[3] - b[0]) * scale,
+            (b[4] - b[1]) * scale,
+            (b[5] - b[2]) * scale,
+            mattress
+              ? BED_PALETTE.blanket
+              : b[4] <= 0.1875
+                ? BED_PALETTE.woodShade
+                : BED_PALETTE.wood,
+          );
+          part.name = `bed-${offsetZ ? "head" : "foot"}-${mattress ? "mattress" : b[4] <= 0.1875 ? "leg" : "frame"}-${index}`;
+          bed.add(part);
+        });
+      }
+      const pillow = box(
+        0,
+        (0.58 - 0.25) * scale,
+        -0.74 * scale,
+        0.82 * scale,
+        0.035 * scale,
+        0.38 * scale,
+        BED_PALETTE.pillow,
+      );
+      pillow.name = "bed-pillow";
+      bed.add(pillow);
+      const fold = box(
+        0,
+        (0.567 - 0.25) * scale,
+        -0.48 * scale,
+        0.96 * scale,
+        0.012 * scale,
+        0.08 * scale,
+        BED_PALETTE.blanketLight,
+      );
+      fold.name = "bed-blanket-fold";
+      bed.add(fold);
+      for (const side of [-1, 1]) {
+        const seam = box(
+          side * 0.487 * scale,
+          (0.32 - 0.25) * scale,
+          0,
+          0.018 * scale,
+          0.035 * scale,
+          2 * scale,
+          BED_PALETTE.sheet,
+        );
+        seam.name = "bed-sheet-seam";
+        bed.add(seam);
+      }
+      bed.rotation.y = Math.PI / 8;
+      bed.position.set(0, 0.06, 0.07);
+      this.group.add(bed);
+    } else if (SHAPES[id]) {
+      const blocks = new THREE.Group();
+      blocks.name = "held-" + SHAPES[id].kind;
+      const boxes = visualBoxList(id),
+        height = Math.max(...boxes.map((b) => b[4]));
+      const base = BLOCKS[SHAPES[id].base],
+        body = material(base.color),
+        top = material(base.top ?? base.color);
+      boxes.forEach((b, index) => {
+        const mesh = new THREE.Mesh(
+          new THREE.BoxGeometry((b[3] - b[0]) * 0.3, (b[4] - b[1]) * 0.3, (b[5] - b[2]) * 0.3),
+          [body, body, top, body, body, body],
+        );
+        mesh.name = `shape-box-${index}`;
+        mesh.position.set(
+          ((b[0] + b[3]) / 2 - 0.5) * 0.3,
+          ((b[1] + b[4]) / 2 - height / 2) * 0.3,
+          ((b[2] + b[5]) / 2 - 0.5) * 0.3,
+        );
+        mesh.castShadow = true;
+        blocks.add(mesh);
+      });
+      if (id === 41) {
+        this.cactusSpines = acquireCactusSpines();
+        const spines = new THREE.Mesh(this.cactusSpines, material("#d9d4a0"));
+        spines.name = "cactus-spines";
+        spines.castShadow = true;
+        blocks.add(spines);
+      }
+      blocks.rotation.y = Math.PI / 8;
+      blocks.position.set(0, 0.05, 0.06);
+      this.group.add(blocks);
+    } else if (BLOCKS[id]) {
       const body = material(color);
       const top = material(BLOCKS[id].top ?? color);
       const block = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), [
@@ -88,7 +208,15 @@ export class HeldItemModel {
         box(0.21, 0.398, 0, 0.08, 0.16, 0.075, color, 0.45);
       } else if ([127, 128, 157, 160].includes(id)) {
         box(-0.1, 0.4, 0, 0.27, 0.23, 0.07, color);
-        box(-0.255, 0.395, 0, 0.04, 0.26, 0.045, id === 128 ? "#dbb579" : id === 157 ? "#fff0a2" : id === 160 ? "#baffee" : "#e1edeb");
+        box(
+          -0.255,
+          0.395,
+          0,
+          0.04,
+          0.26,
+          0.045,
+          id === 128 ? "#dbb579" : id === 157 ? "#fff0a2" : id === 160 ? "#baffee" : "#e1edeb",
+        );
       } else if ([130, 158, 161].includes(id)) {
         box(0, 0.48, 0, 0.19, 0.23, 0.06, color);
         box(0, 0.62, 0, 0.12, 0.05, 0.055, color);
@@ -182,7 +310,7 @@ export class HeldItemModel {
     const textures = new Set<THREE.Texture>();
     this.group.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return;
-      geometries.add(object.geometry);
+      if (object.geometry !== this.cactusSpines) geometries.add(object.geometry);
       for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
         materials.add(material);
         const texture = (material as THREE.MeshStandardMaterial).map;
@@ -192,6 +320,13 @@ export class HeldItemModel {
     geometries.forEach((geometry) => geometry.dispose());
     materials.forEach((material) => material.dispose());
     textures.forEach((texture) => texture.dispose());
+    if (this.cactusSpines) {
+      this.cactusSpines = null;
+      if (--cactusGeometryUsers === 0) {
+        cactusGeometry!.dispose();
+        cactusGeometry = null;
+      }
+    }
     this.group.clear();
   }
   dispose() {

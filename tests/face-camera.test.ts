@@ -604,7 +604,11 @@ async function cameraClient(port: number, token: string, nick: string) {
   return { ws, messages, send, wait, id: welcome.id };
 }
 
-test("Two real WebSocket clients relay HD camera packets across two Redis-connected gateways without saving images", async () => {
+test("Two real WebSocket clients relay HD camera packets across two Redis-connected gateways without saving images", async (t) => {
+  // Socket/Redis delivery stays real; only the admission clock is controlled so CPU-heavy
+  // parallel tests cannot turn a deliberately early frame into a valid later one.
+  let cameraNow = Date.now();
+  t.mock.method(Date, "now", () => cameraNow);
   const bus = new CameraBus(),
     apps = [0, 1].map(() =>
       createGameServer({
@@ -659,6 +663,17 @@ test("Two real WebSocket clients relay HD camera packets across two Redis-connec
         ({ channel, value }) => channel.endsWith(":in") && decodeRedis(value).type === "faceFrame",
       ).length,
       1,
+    );
+    cameraNow += 334;
+    const later = jpeg(640, 640);
+    b.send({ type: "faceFrame", frame: later });
+    await a.wait((message) => message.type === "faceFrame" && message.frame === later);
+    assert.equal(
+      bus.published.filter(
+        ({ channel, value }) => channel.endsWith(":in") && decodeRedis(value).type === "faceFrame",
+      ).length,
+      2,
+      "the next valid frame is admitted after the explicit interval",
     );
     const leader = apps.find((app) => app.gateway.room)!.gateway;
     await leader.persist();

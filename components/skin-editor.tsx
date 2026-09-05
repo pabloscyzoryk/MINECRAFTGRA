@@ -79,7 +79,9 @@ const palette = [
   '#4678c4',
   '#a64677',
 ];
-export default function SkinEditor() {
+export default function SkinEditor({ presentationActive = true }: { presentationActive?: boolean } = {}) {
+  const presentationRef = useRef(presentationActive);
+  presentationRef.current = presentationActive;
   const mount = useRef<HTMLDivElement>(null),
     pixel = useRef<HTMLCanvasElement>(null),
     file = useRef<HTMLInputElement>(null);
@@ -386,6 +388,7 @@ export default function SkinEditor() {
       renderer.domElement.addEventListener('pointercancel', up);
       const frame = () => {
         raf = requestAnimationFrame(frame);
+        if (!presentationRef.current || document.hidden) return;
         orbit.update();
         avatar.capePivot.rotation.x =
           0.16 + Math.sin(performance.now() * 0.002) * 0.04;

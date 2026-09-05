@@ -9,6 +9,102 @@ import { gzipSync, gunzipSync } from "node:zlib";
 // server/room.ts
 import * as THREE2 from "three";
 
+// lib/block-shapes.ts
+var CARDINAL = [
+  [0, 0, -1],
+  [1, 0, 0],
+  [0, 0, 1],
+  [-1, 0, 0]
+];
+var SHAPES = (() => {
+  const out = {};
+  out[41] = { kind: "cactus", base: 41, item: 41, upper: false, facing: 0 };
+  for (const [start, base] of [
+    [170, 8],
+    [180, 3]
+  ]) {
+    for (let i = 0; i < 2; i++)
+      out[start + i] = { kind: "slab", base, item: start, upper: !!i, facing: 0 };
+    for (let i = 0; i < 8; i++)
+      out[start + 2 + i] = { kind: "stairs", base, item: start + 2, upper: i >= 4, facing: i % 4 };
+  }
+  out[198] = { kind: "double-slab", base: 8, item: 170, upper: false, facing: 0 };
+  out[199] = { kind: "double-slab", base: 3, item: 180, upper: false, facing: 0 };
+  out[62] = { kind: "bed", base: 62, item: 62, upper: false, facing: 0 };
+  for (let i = 0; i < 8; i++)
+    out[190 + i] = { kind: "bed", base: 62, item: 62, upper: false, facing: i % 4, head: i >= 4 };
+  return out;
+})();
+var FULL = [[0, 0, 0, 1, 1, 1]];
+var EMPTY = [];
+var boxes = /* @__PURE__ */ new Map();
+var canonicalBlock = (id) => SHAPES[id]?.item ?? id;
+function boxList(id) {
+  if (!id) return EMPTY;
+  const s = SHAPES[id];
+  if (!s || s.kind === "double-slab") return FULL;
+  const cached = boxes.get(id);
+  if (cached) return cached;
+  let result;
+  if (s.kind === "cactus") result = [[0.0625, 0, 0.0625, 0.9375, 1, 0.9375]];
+  else if (s.kind === "bed") result = [[0, 0, 0, 1, 0.5625, 1]];
+  else if (s.kind === "slab") result = [[0, s.upper ? 0.5 : 0, 0, 1, s.upper ? 1 : 0.5, 1]];
+  else {
+    const half = s.facing === 0 ? [0, 0, 0, 1, 1, 0.5] : s.facing === 1 ? [0.5, 0, 0, 1, 1, 1] : s.facing === 2 ? [0, 0, 0.5, 1, 1, 1] : [0, 0, 0, 0.5, 1, 1];
+    result = [
+      [0, s.upper ? 0.5 : 0, 0, 1, s.upper ? 1 : 0.5, 1],
+      [half[0], s.upper ? 0 : 0.5, half[2], half[3], s.upper ? 0.5 : 1, half[5]]
+    ];
+  }
+  boxes.set(id, result);
+  return result;
+}
+function pointInside(id, x, y, z) {
+  return boxList(id).some(
+    (b2) => x >= b2[0] && x < b2[3] && y >= b2[1] && y < b2[4] && z >= b2[2] && z < b2[5]
+  );
+}
+function intersectsBlock(id, x, y, z, a) {
+  const e = 1e-7;
+  return boxList(id).some(
+    (b2) => a[3] > x + b2[0] + e && a[0] < x + b2[3] - e && a[4] > y + b2[1] + e && a[1] < y + b2[4] - e && a[5] > z + b2[2] + e && a[2] < z + b2[5] - e
+  );
+}
+function worldBoxCollision(a, get, solid) {
+  for (let x = Math.floor(a[0] + 1e-7); x <= Math.floor(a[3] - 1e-7); x++)
+    for (let y = Math.floor(a[1] + 1e-7); y <= Math.floor(a[4] - 1e-7); y++)
+      for (let z = Math.floor(a[2] + 1e-7); z <= Math.floor(a[5] - 1e-7); z++) {
+        const id = get(x, y, z);
+        if (solid(id) && intersectsBlock(id, x, y, z, a)) return true;
+      }
+  return false;
+}
+var playerBox = (p, height = 1.75) => [
+  p.x - 0.29,
+  p.y,
+  p.z - 0.29,
+  p.x + 0.29,
+  p.y + height,
+  p.z + 0.29
+];
+var facingFromYaw = (yaw) => (Math.round(-yaw / (Math.PI / 2)) % 4 + 4) % 4;
+function placementFor(a) {
+  if (!Number.isFinite(a.yaw) || ![...a.target, ...a.normal, ...a.point].every(Number.isFinite))
+    return null;
+  const held = canonicalBlock(a.held), s = SHAPES[held], target = SHAPES[a.targetId];
+  const [x, y, z] = a.target;
+  if (s?.kind === "slab" && target?.kind === "slab" && s.base === target.base && (!target.upper && a.normal[1] === 1 || target.upper && a.normal[1] === -1))
+    return { id: s.base === 8 ? 198 : 199, x, y, z, merge: true };
+  const upper = a.normal[1] === -1 || a.normal[1] === 0 && a.point[1] - y > 0.5;
+  const id = s?.kind === "slab" ? held + Number(upper) : s?.kind === "stairs" ? held + facingFromYaw(a.yaw) + (upper ? 4 : 0) : held;
+  return { id, x: x + a.normal[0], y: y + a.normal[1], z: z + a.normal[2], merge: false };
+}
+function mergeAdjacentSlab(placement, existing) {
+  if (!existing) return placement;
+  const a = SHAPES[placement.id], b2 = SHAPES[existing];
+  return a?.kind === "slab" && b2?.kind === "slab" && a.base === b2.base && a.upper !== b2.upper ? { ...placement, id: a.base === 8 ? 198 : 199, merge: true } : null;
+}
+
 // lib/blocks.ts
 var b = (id, name, color, category = "Natura", extra = {}) => ({
   id,
@@ -135,6 +231,12 @@ var BLOCKS = [
   b(98, "Blok kwarcu", "#eadfd4", "Budowanie"),
   b(99, "Blok netherytu", "#4c4244", "Rudy")
 ];
+for (const [key, shape] of Object.entries(SHAPES)) {
+  const id = Number(key);
+  if (id === 62 || id === 41) continue;
+  const name = shape.kind === "bed" ? "\u0141\xF3\u017Cko" : shape.kind === "stairs" ? `Schody ${shape.base === 8 ? "d\u0119bowe" : "kamienne"}` : `${shape.kind === "double-slab" ? "Podw\xF3jny p\xF3\u0142blok" : "P\xF3\u0142blok"} ${shape.base === 8 ? "d\u0119bowy" : "kamienny"}`;
+  BLOCKS[id] = b(id, name, BLOCKS[shape.base].color, "Budowanie");
+}
 var ITEMS = [
   { id: 133, name: "Sztabka z\u0142ota", color: "#e7ba4c", category: "Surowce" },
   { id: 134, name: "Py\u0142 redstone", color: "#d34740", category: "Surowce" },
@@ -219,6 +321,10 @@ var ITEMS = [
   }
 ];
 var RECIPES = [
+  { out: 170, n: 6, need: [[8, 3]] },
+  { out: 172, n: 4, need: [[8, 6]] },
+  { out: 180, n: 6, need: [[3, 3]] },
+  { out: 182, n: 4, need: [[3, 6]] },
   {
     out: 131,
     n: 1,
@@ -396,6 +502,185 @@ var RECIPES = [
   { out: 34, n: 1, need: [[111, 9]] }
 ];
 
+// lib/bed.ts
+function bedPartner(id, x, y, z) {
+  const shape = SHAPES[id];
+  if (!shape || shape.kind !== "bed" || id === 62) return null;
+  const [dx, , dz] = CARDINAL[shape.facing], sign = shape.head ? -1 : 1;
+  return { x: x + dx * sign, y, z: z + dz * sign, id: (shape.head ? 190 : 194) + shape.facing };
+}
+function placeBed(world, foot, yaw, occupied = []) {
+  if (!foot.every(Number.isInteger) || !Number.isFinite(yaw) || foot[1] < 1 || foot[1] > 70)
+    return false;
+  const facing = facingFromYaw(yaw), [dx, , dz] = CARDINAL[facing];
+  const parts = [
+    { x: foot[0], y: foot[1], z: foot[2], id: 190 + facing },
+    { x: foot[0] + dx, y: foot[1], z: foot[2] + dz, id: 194 + facing }
+  ];
+  for (const p of parts) world.chunk?.(Math.floor(p.x / 16), Math.floor(p.z / 16));
+  for (const p of parts) {
+    const previous = world.get(p.x, p.y, p.z), below = world.get(p.x, p.y - 1, p.z);
+    if (previous && !BLOCKS[previous]?.plant) return false;
+    if (!BLOCKS[below]?.solid || ![
+      [0.1, 0.1],
+      [0.9, 0.1],
+      [0.1, 0.9],
+      [0.9, 0.9]
+    ].every(([x, z]) => pointInside(below, x, 0.999, z)))
+      return false;
+    if (occupied.some((a) => intersectsBlock(p.id, p.x, p.y, p.z, a))) return false;
+  }
+  for (const p of parts) world.set(p.x, p.y, p.z, p.id);
+  return true;
+}
+
+// lib/cactus-contact.ts
+var CACTUS_CONTACT_EPSILON = 0.01;
+function touchesCactus(get, a) {
+  if (!a.every(Number.isFinite) || a.slice(0, 3).some((n, axis) => n > a[axis + 3])) return false;
+  const e = CACTUS_CONTACT_EPSILON;
+  for (let x = Math.floor(a[0] - e); x <= Math.floor(a[3] + e); x++)
+    for (let y = Math.floor(a[1] - e); y <= Math.floor(a[4] + e); y++)
+      for (let z = Math.floor(a[2] - e); z <= Math.floor(a[5] + e); z++) {
+        if (get(x, y, z) !== 41) continue;
+        if (a[3] >= x - e && a[0] <= x + 1 + e && a[4] >= y - e && a[1] <= y + 1 + e && a[5] >= z - e && a[2] <= z + 1 + e)
+          return true;
+      }
+  return false;
+}
+
+// lib/eating.ts
+var EAT_DURATION = 1.6;
+function isFood(id) {
+  return id === 106 || id === 107;
+}
+
+// lib/bed-rest.ts
+var BED_REST_SECONDS = 10;
+var isBedNight = (clock) => (clock % 600 + 600) % 600 > 348;
+function resolveBedRest(world, x, y, z) {
+  if (world.dimension !== "overworld" || ![x, y, z].every(Number.isInteger)) return null;
+  world.chunk?.(Math.floor(x / 16), Math.floor(z / 16));
+  const id = world.get(x, y, z), s = SHAPES[id];
+  if (s?.kind !== "bed") return null;
+  const other = bedPartner(id, x, y, z);
+  if (other) {
+    world.chunk?.(Math.floor(other.x / 16), Math.floor(other.z / 16));
+    if (world.get(other.x, other.y, other.z) !== other.id) return null;
+  }
+  const foot = s.head && other ? [other.x, other.y, other.z] : [x, y, z], head = !s.head && other ? [other.x, other.y, other.z] : [x, y, z];
+  const p = [(foot[0] + head[0]) / 2 + 0.5, y + 0.5625, (foot[2] + head[2]) / 2 + 0.5];
+  const rest = {
+    key: world.dimension + ":" + foot.join(","),
+    dimension: world.dimension,
+    foot,
+    head,
+    facing: s.facing,
+    p,
+    yaw: -s.facing * Math.PI / 2,
+    elapsed: 0,
+    nightSkipped: false,
+    ...!other ? { legacy: true } : {}
+  };
+  if (worldBoxCollision(
+    [
+      Math.min(foot[0], head[0]) + 0.12,
+      y + 0.563,
+      Math.min(foot[2], head[2]) + 0.12,
+      Math.max(foot[0], head[0]) + 0.88,
+      y + 1.13,
+      Math.max(foot[2], head[2]) + 0.88
+    ],
+    (a, b2, c) => world.get(a, b2, c),
+    (id2) => !!BLOCKS[id2]?.solid
+  ))
+    return null;
+  return rest;
+}
+function bedRestValid(world, rest) {
+  if (world.dimension !== rest.dimension) return false;
+  if (rest.legacy) return world.get(...rest.foot) === 62;
+  return world.get(...rest.foot) === 190 + rest.facing && world.get(...rest.head) === 194 + rest.facing;
+}
+function advanceBedRest(rest, dt, clock) {
+  if (Number.isFinite(dt) && dt > 0) rest.elapsed = Math.min(BED_REST_SECONDS, rest.elapsed + dt);
+  const night = isBedNight(clock);
+  if (rest.elapsed >= BED_REST_SECONDS - 1e-8 && night && !rest.nightSkipped) {
+    rest.elapsed = BED_REST_SECONDS;
+    rest.nightSkipped = true;
+    return { clock: Math.floor(clock / 600) * 600 + 690, skipped: true };
+  }
+  return { clock, skipped: false };
+}
+function bedRestEye(rest) {
+  const d = CARDINAL[rest.facing];
+  return [
+    rest.head[0] + 0.5 + d[0] * (rest.legacy ? 0.08 : 0.22),
+    rest.head[1] + 0.91,
+    rest.head[2] + 0.5 + d[2] * (rest.legacy ? 0.08 : 0.22)
+  ];
+}
+function bedRestPose(rest) {
+  const d = CARDINAL[rest.facing];
+  return {
+    p: [
+      rest.foot[0] + 0.5 - d[0] * (rest.legacy ? 0.42 : 0.32),
+      rest.foot[1] + 0.72,
+      rest.foot[2] + 0.5 - d[2] * (rest.legacy ? 0.42 : 0.32)
+    ],
+    yaw: rest.yaw
+  };
+}
+function bedRestExit(world, rest, fallback) {
+  const solid = (id) => !!BLOCKS[id]?.solid;
+  const valid = (p) => {
+    if (!p.every(Number.isFinite) || p[1] < 1 || p[1] > 73) return false;
+    const a = playerBox({ x: p[0], y: p[1], z: p[2] }, 1.75);
+    if (worldBoxCollision(a, (x, y, z) => world.get(x, y, z), solid)) return false;
+    for (let y = Math.floor(p[1]); y <= Math.floor(p[1] + 1.75); y++)
+      for (let x = Math.floor(a[0]); x <= Math.floor(a[3]); x++)
+        for (let z = Math.floor(a[2]); z <= Math.floor(a[5]); z++)
+          if ([7, 15].includes(world.get(x, y, z))) return false;
+    return worldBoxCollision(
+      playerBox({ x: p[0], y: p[1] - 2e-3, z: p[2] }, 3e-3),
+      (x, y, z) => world.get(x, y, z),
+      solid
+    );
+  };
+  const cells = [];
+  for (let x = rest.foot[0] - 4; x <= rest.foot[0] + 4; x++)
+    for (let z = rest.foot[2] - 4; z <= rest.foot[2] + 4; z++) {
+      if (x === rest.foot[0] && z === rest.foot[2] || x === rest.head[0] && z === rest.head[2])
+        continue;
+      cells.push({ x, z, distance: Math.hypot(x + 0.5 - rest.p[0], z + 0.5 - rest.p[2]) });
+    }
+  cells.sort((a, b2) => a.distance - b2.distance);
+  for (const c of cells) world.chunk?.(Math.floor(c.x / 16), Math.floor(c.z / 16));
+  for (const c of cells) {
+    const candidates = [];
+    for (let y = Math.max(0, rest.foot[1] - 4); y <= Math.min(71, rest.foot[1] + 3); y++) {
+      const id = world.get(c.x, y, c.z);
+      if (!solid(id) || SHAPES[id]?.kind === "bed") continue;
+      for (const b2 of boxList(id)) candidates.push(y + b2[4]);
+    }
+    candidates.sort((a, b2) => Math.abs(a - rest.foot[1]) - Math.abs(b2 - rest.foot[1]));
+    for (const y of candidates) {
+      const p = [c.x + 0.5, y, c.z + 0.5];
+      if (valid(p)) return p;
+    }
+  }
+  if (fallback) {
+    world.chunk?.(Math.floor(fallback[0] / 16), Math.floor(fallback[2] / 16));
+    if (valid(fallback)) return fallback;
+  }
+  for (const c of cells)
+    for (let y = rest.foot[1] + 4; y <= 72; y++) {
+      const p = [c.x + 0.5, y, c.z + 0.5];
+      if (valid(p)) return p;
+    }
+  return null;
+}
+
 // lib/mining.ts
 var rule = (hardness, tool = "hand", tier = 0, extra = {}) => ({ hardness, tool, tier, ...extra });
 var untouchable = () => rule(0, "hand", 0, { unbreakable: true });
@@ -502,6 +787,8 @@ var MINING_RULES = {
   98: rule(0.8, "pickaxe", 1),
   99: rule(50, "pickaxe", 4)
 };
+for (const [id, shape] of Object.entries(SHAPES))
+  MINING_RULES[Number(id)] = MINING_RULES[shape.base];
 var TOOL_RULES = {
   101: { kind: "pickaxe", speed: 2, tier: 1 },
   102: { kind: "pickaxe", speed: 4, tier: 2 },
@@ -558,6 +845,8 @@ function minedResource(block) {
     93: [133, 1]
   };
   const result = resources[block];
+  if (SHAPES[block])
+    return { id: canonicalBlock(block), n: SHAPES[block].kind === "double-slab" ? 2 : 1 };
   return result ? { id: result[0], n: result[1] } : { id: block, n: 1 };
 }
 
@@ -700,6 +989,22 @@ var wood = [8, 44, 51, 78, 86];
 var logs = [5, 25, 43, 47, 49, 52, 76];
 var planks = [8, 8, 44, 8, 51, 86, 78];
 var GRID_RECIPES = [
+  ...[
+    [8, 170, 172],
+    [3, 180, 182]
+  ].flatMap(([m, slab, stairs]) => [
+    { name: "P\xF3\u0142bloki", out: slab, n: 6, pattern: [[m, m, m]] },
+    {
+      name: "Schody",
+      out: stairs,
+      n: 4,
+      pattern: [
+        [m, 0, 0],
+        [m, m, 0],
+        [m, m, m]
+      ]
+    }
+  ]),
   ...[
     [140, 141, 142, 143, 144],
     [133, 145, 146, 147, 148],
@@ -1387,15 +1692,16 @@ function validSlotRef(value) {
   const v = value;
   return ["slots", "grid", "chest", "furnace"].includes(v.area) && Number.isInteger(v.index) && v.index >= 0 && v.index < (v.area === "slots" ? 36 : v.area === "grid" ? 9 : v.area === "furnace" ? 3 : 27);
 }
+var knownItem2 = (id) => Number.isInteger(id) && id > 0 && (!!BLOCKS[id] || ITEMS.some((item) => item.id === id));
 function expectedStack(value) {
   if (value == null) return true;
   const s = value;
-  return Number.isInteger(s.id) && s.id > 0 && s.id <= 130 && Number.isInteger(s.n) && s.n > 0 && s.n <= maxStack(s.id);
+  return knownItem2(s.id) && Number.isInteger(s.n) && s.n > 0 && s.n <= maxStack(s.id);
 }
 function validGesture(value) {
   if (!value || typeof value !== "object") return false;
   const g = value;
-  if (g.type === "collect") return Number.isInteger(g.id) && g.id > 0 && g.id <= 130;
+  if (g.type === "collect") return knownItem2(g.id);
   if (g.type === "distribute")
     return Array.isArray(g.slots) && g.slots.length > 0 && g.slots.length <= 75 && g.slots.every(validSlotRef) && (g.right === void 0 || typeof g.right === "boolean");
   if (g.type === "click")
@@ -1828,6 +2134,269 @@ function biomeSample(x, z, seed) {
   };
 }
 
+// lib/castles.ts
+var CELL = 512;
+var REACH = 70;
+var suitable = /* @__PURE__ */ new Set(["plains", "forest", "birch", "taiga", "cherry", "flower", "snow"]);
+var random = (x, z, seed) => {
+  let n = Math.imul(x, 374761393) + Math.imul(z, 668265263) + Math.imul(seed, 144269);
+  n = Math.imul(n ^ n >>> 13, 1274126177);
+  return ((n ^ n >>> 16) >>> 0) / 4294967295;
+};
+var firstCache = /* @__PURE__ */ new Map();
+var site = (seed, x, z, id, kind) => {
+  const biome = biomeSample(x, z, seed).biome.id;
+  const variant = kind ?? (["forest", "taiga", "birch"].includes(biome) && random(x, z, seed + 607) < 0.6 ? "ruined" : "citadel");
+  return {
+    id,
+    kind: variant,
+    x,
+    z,
+    halfSize: 36,
+    biome,
+    name: variant === "ruined" ? "Ruiny Twierdzy Cisowych Wzg\xF3rz" : biome === "snow" ? "Zamek Srebrnej Grani" : "Zamek Zielonej Chor\u0105gwi"
+  };
+};
+function firstCastle(seed) {
+  const cached = firstCache.get(seed);
+  if (cached) return cached;
+  const phase = random(seed, 17, 721) * Math.PI * 2;
+  let chosen;
+  for (let i = 0; i < 16; i++) {
+    const angle = phase + i * Math.PI / 8, radius = 240 + i % 3 * 24;
+    const candidate = site(
+      seed,
+      Math.round(Math.cos(angle) * radius),
+      Math.round(Math.sin(angle) * radius),
+      "castle:first",
+      "citadel"
+    );
+    chosen ??= candidate;
+    if (suitable.has(candidate.biome)) {
+      chosen = candidate;
+      break;
+    }
+  }
+  if (firstCache.size >= 128) firstCache.delete(firstCache.keys().next().value);
+  firstCache.set(seed, chosen);
+  return chosen;
+}
+function castleSites(seed, x, z, radius = 96) {
+  if (![seed, x, z, radius].every(Number.isFinite)) return [];
+  radius = Math.max(0, Math.min(2048, radius));
+  const first = firstCastle(seed), result = [];
+  const nearby = (s) => Math.abs(s.x - x) <= radius + REACH && Math.abs(s.z - z) <= radius + REACH;
+  if (nearby(first)) result.push(first);
+  for (let cx = Math.floor((x - radius - REACH) / CELL); cx <= Math.floor((x + radius + REACH) / CELL); cx++)
+    for (let cz = Math.floor((z - radius - REACH) / CELL); cz <= Math.floor((z + radius + REACH) / CELL); cz++) {
+      if (random(cx, cz, seed + 613) > 0.32) continue;
+      const sx = cx * CELL + 100 + Math.floor(random(cx, cz, seed + 617) * 310);
+      const sz = cz * CELL + 100 + Math.floor(random(cx, cz, seed + 619) * 310);
+      if (Math.hypot(sx, sz) < 190 || Math.hypot(sx - first.x, sz - first.z) < 180) continue;
+      const candidate = site(seed, sx, sz, `castle:${cx},${cz}`);
+      if (suitable.has(candidate.biome) && nearby(candidate)) result.push(candidate);
+    }
+  return result;
+}
+function describeCastle(s, height) {
+  const samples = [-22, 0, 22].flatMap((x) => [-22, 0, 22].map((z) => height(s.x + x, s.z + z))).sort((a, b2) => a - b2);
+  const y = Math.max(16, Math.min(34, Math.round(samples[5]) + 1));
+  const guardOffsets = [
+    [-5, 24],
+    [5, 24],
+    [-17, 10],
+    [17, 10]
+  ];
+  return {
+    ...s,
+    y,
+    bounds: { minX: s.x - 36, maxX: s.x + 36, minZ: s.z - 36, maxZ: s.z + 69 },
+    entrance: [s.x, y, s.z + 35],
+    approachY: Math.max(3, Math.min(60, height(s.x, s.z + 69) + 1)),
+    guards: guardOffsets.slice(0, s.kind === "ruined" ? 3 : 4).map(([x, z], i) => ({ id: `${s.id}:guard:${i}`, p: [s.x + x + 0.5, y, s.z + z + 0.5] })),
+    loot: [
+      { p: [s.x - 21, y, s.z + 4], role: "armory" },
+      { p: [s.x + 8, y + 6, s.z - 6], role: "library" },
+      { p: [s.x + 8, y + 12, s.z - 16], role: "treasury" },
+      { p: [s.x + 29, y + 8, s.z + 29], role: "tower" }
+    ]
+  };
+}
+function castleLoot(c, x, y, z) {
+  const role = c.loot.find(
+    (entry) => entry.p[0] === x && entry.p[1] === y && entry.p[2] === z
+  )?.role;
+  if (!role) return null;
+  if (role === "armory") return { 104: 1, 131: 1, 113: 24, 110: 5, 107: 5 };
+  if (role === "library") return { 119: 2, 137: 8, 110: 3, 107: 3 };
+  if (role === "treasury") return { 111: c.kind === "ruined" ? 3 : 5, 133: 8, 136: 3, 149: 1 };
+  return { 105: 1, 113: 24, 110: 4, 107: 4 };
+}
+function generateCastleChunk(castle, chunk, seed) {
+  const ox = chunk.cx * 16, oz = chunk.cz * 16, maxY = chunk.data.length / 256;
+  if (ox > castle.bounds.maxX || ox + 15 < castle.bounds.minX || oz > castle.bounds.maxZ || oz + 15 < castle.bounds.minZ)
+    return;
+  const { x: cx, y, z: cz } = castle, stone = castle.kind === "ruined" ? 40 : 9;
+  const put = (x, yy, z, id) => {
+    x += cx;
+    z += cz;
+    if (x >= ox && x < ox + 16 && z >= oz && z < oz + 16 && yy >= 1 && yy < maxY)
+      chunk.data[x - ox + (z - oz) * 16 + yy * 256] = id;
+  };
+  const fill = (x, yy, z, width, height, depth, id) => {
+    const ax = Math.max(ox, cx + x), bx = Math.min(ox + 16, cx + x + width);
+    const az = Math.max(oz, cz + z), bz = Math.min(oz + 16, cz + z + depth);
+    if (ax >= bx || az >= bz) return;
+    for (let h = Math.max(1, yy); h < Math.min(maxY, yy + height); h++)
+      for (let zz = az; zz < bz; zz++)
+        for (let xx = ax; xx < bx; xx++) chunk.data[xx - ox + (zz - oz) * 16 + h * 256] = id;
+  };
+  const shell = (x, yy, z, width, height, depth, id) => {
+    fill(x, yy, z, width, height, 1, id);
+    fill(x, yy, z + depth - 1, width, height, 1, id);
+    fill(x, yy, z, 1, height, depth, id);
+    fill(x + width - 1, yy, z, 1, height, depth, id);
+  };
+  fill(-36, 1, -36, 73, y - 1, 73, stone);
+  fill(-36, y, -36, 73, maxY - y, 73, 0);
+  fill(-35, y - 1, -35, 71, 1, 71, 1);
+  fill(-4, y - 1, -34, 9, 1, 70, stone);
+  fill(-31, y - 1, 8, 63, 1, 7, stone);
+  for (const side of [-1, 1]) {
+    fill(-29, y, side < 0 ? -33 : 31, 59, 9, 3, stone);
+    fill(side < 0 ? -33 : 31, y, -29, 3, 9, 59, stone);
+    for (let n = -28; n <= 28; n += 3) {
+      fill(n, y + 9, side * 33, 2, 2, 1, stone);
+      fill(side * 33, y + 9, n, 1, 2, 2, stone);
+    }
+  }
+  fill(-3, y, 30, 7, 6, 5, 0);
+  fill(-4, y + 6, 30, 9, 1, 5, 11);
+  for (const x of [-6, 6]) {
+    fill(x, y, 30, 2, 8, 5, 11);
+    put(x, y + 5, 35, 48);
+  }
+  for (let z = 37; z <= 69; z++) {
+    const difference = castle.approachY - y;
+    const h = y + Math.sign(difference) * Math.min(Math.abs(difference), z - 37);
+    fill(-3, 1, z, 7, Math.max(1, h - 1), 1, stone);
+    fill(-3, h, z, 7, maxY - h, 1, 0);
+    fill(-3, h - 1, z, 7, 1, 1, stone);
+    if (z > 37 && z - 37 <= Math.abs(difference))
+      fill(-3, difference < 0 ? h : h - 1, z, 7, 1, 1, difference < 0 ? 182 : 184);
+  }
+  for (const tx of [-29, 29])
+    for (const tz of [-29, 29]) {
+      fill(tx - 4, y - 1, tz - 4, 9, 1, 9, stone);
+      shell(tx - 4, y, tz - 4, 9, 17, 9, stone);
+      for (const level of [8, 16]) fill(tx - 3, y + level - 1, tz - 3, 7, 1, 7, stone);
+      for (const level of [0, 8]) {
+        fill(tx - 3, y + level + 4, tz - 2, 4, 4, 1, 0);
+        fill(tx - 3, y + level + 7, tz + 1, 4, 1, 1, 0);
+        for (let n = 0; n < 4; n++) {
+          put(tx - 3 + n, y + level + n, tz - 2, 183);
+          put(tx - n, y + level + 4 + n, tz + 1, 185);
+        }
+        fill(tx + 1, y + level + 3, tz - 2, 2, 1, 4, stone);
+        fill(tx - 3, y + level + 7, tz + 2, 1, 1, 2, stone);
+      }
+      for (const level of [0, 8]) {
+        fill(tx - Math.sign(tx) * 4, y + level, tz - 1, 1, 3, 3, 0);
+        fill(tx - 1, y + level, tz - Math.sign(tz) * 4, 3, 3, 1, 0);
+      }
+      for (const side of [-1, 1])
+        for (let n = -4; n <= 4; n += 2) {
+          put(tx + n, y + 17, tz + side * 4, stone);
+          put(tx + side * 4, y + 17, tz + n, stone);
+        }
+      for (const yy of [y + 3, y + 11]) {
+        put(tx, yy, tz + Math.sign(tz) * 4, 10);
+        put(tx, yy, tz + Math.sign(tz) * 3, 48);
+      }
+      fill(tx, y + 17, tz, 1, 5, 1, 5);
+      fill(tx + 1, y + 19, tz, 3, 3, 1, castle.kind === "ruined" ? 32 : 31);
+    }
+  fill(-13, y - 1, -21, 27, 1, 27, stone);
+  shell(-13, y, -21, 27, 19, 27, stone);
+  for (const level of [6, 12, 18]) fill(-12, y + level - 1, -20, 25, 1, 25, 8);
+  for (const level of [0, 6, 12]) {
+    fill(0, y + level, -19, 1, 5, 22, stone);
+    for (const z of [-13, -3]) fill(0, y + level, z, 1, 3, 3, 0);
+    for (const z of [-17, -9, 0])
+      for (const side of [-1, 1]) {
+        fill(side * 13, y + level + 2, z, 1, 2, 2, 10);
+        put(side * 12, y + level + 3, z, 48);
+      }
+    for (const x of [-7, 7]) {
+      fill(x, y + level + 2, 5, 2, 2, 1, 10);
+      put(x, y + level + 3, 4, 48);
+    }
+    const east = level !== 6;
+    const lane = east ? -16 : -12;
+    fill(-10, y + level + 3, lane, 6, 3, 3, 0);
+    for (let n = 0; n < 6; n++)
+      fill(east ? -10 + n : -5 - n, y + level + n, lane, 1, 1, 3, east ? 183 : 185);
+    fill(east ? -4 : -11, y + level + 5, -16, 1, 1, 7, 8);
+  }
+  fill(-2, y, 4, 5, 4, 3, 0);
+  fill(-2, y - 1, 5, 5, 1, 4, 11);
+  for (let n = -13; n <= 13; n += 3) {
+    fill(n, y + 19, -21, 2, 1, 1, stone);
+    fill(n, y + 19, 5, 2, 1, 1, stone);
+    fill(-13, y + 19, n - 8, 1, 1, 2, stone);
+    fill(13, y + 19, n - 8, 1, 1, 2, stone);
+  }
+  for (const x of [-10, 9]) {
+    fill(x, y + 6, 6, 2, 5, 1, 31);
+    fill(x, y + 8, 6, 2, 1, 1, 32);
+  }
+  fill(3, y + 18, -12, 7, 5, 7, stone);
+  shell(3, y + 22, -12, 7, 3, 7, 10);
+  put(6, y + 23, -9, 16);
+  for (let h = 0; h < 4; h++) fill(2 + h, y + 25 + h, -13 + h, 9 - h * 2, 1, 9 - h * 2, 47);
+  for (const sx of [-25, 17]) {
+    fill(sx, y - 1, -7, 9, 1, 17, 8);
+    shell(sx, y, -7, 9, 5, 17, 8);
+    for (const xx of [sx, sx + 8]) for (const zz of [-7, 1, 9]) fill(xx, y, zz, 1, 5, 1, 5);
+    fill(sx + (sx < 0 ? 8 : 0), y, 1, 1, 3, 3, 0);
+    for (let h = 0; h < 5; h++) fill(sx - 1 + h, y + 5 + h, -8, 11 - h * 2, 1, 19, 47);
+    put(sx + 4, y + 3, 0, 48);
+    put(sx + 3, y, -5, 28);
+    put(sx + 5, y, -5, 29);
+    for (const x of [sx + 2, sx + 5]) {
+      put(x, y, 6, 190);
+      put(x, y, 5, 194);
+    }
+  }
+  for (let x = 3; x < 11; x++) {
+    put(x, y, -12, 8);
+    put(x, y, -8, 8);
+  }
+  for (let z = -18; z < -3; z += 2) {
+    put(11, y + 6, z, 30);
+    put(11, y + 7, z, 30);
+  }
+  fill(5, y + 12, -19, 5, 1, 2, 31);
+  for (const x of [-20, 20]) {
+    fill(x, y, 20, 1, 4, 1, 5);
+    put(x, y + 4, 20, 48);
+  }
+  if (castle.kind === "ruined") {
+    for (let xx = Math.max(ox, cx - 34); xx < Math.min(ox + 16, cx + 35); xx++)
+      for (let zz = Math.max(oz, cz - 34); zz < Math.min(oz + 16, cz + 35); zz++) {
+        const r = random(xx, zz, seed + 733), brokenTower = xx > cx + 24 && zz < cz - 24;
+        for (let yy = y + 4; yy < Math.min(maxY, y + 29); yy++) {
+          const index = xx - ox + (zz - oz) * 16 + yy * 256, id = chunk.data[index];
+          if ([8, 9, 40, 47, 10].includes(id) && (brokenTower ? yy > y + 10 : r > 0.84 && yy > y + 8) && ![y + 5, y + 7, y + 11, y + 15, y + 17].includes(yy))
+            chunk.data[index] = 0;
+        }
+        if (r > 0.97 && Math.abs(xx - cx) > 8 && zz > cz + 13 && zz < cz + 25)
+          put(xx - cx, y, zz - cz, 40);
+      }
+  }
+  for (const entry of castle.loot) put(entry.p[0] - cx, entry.p[1], entry.p[2] - cz, 61);
+}
+
 // lib/world.ts
 var SIZE = 16;
 var HEIGHT = 72;
@@ -1849,11 +2418,26 @@ var World = class {
   onEdit;
   dimension = "overworld";
   seed = 24680;
+  castleCache = /* @__PURE__ */ new Map();
   constructor(seed = 24680) {
     this.seed = seed;
   }
   biomeInfo(x, z) {
     return biomeSample(x, z, this.seed).biome;
+  }
+  castlesNearby(x, z, radius = 96) {
+    if (this.dimension !== "overworld") return [];
+    return castleSites(this.seed, x, z, radius).map((site2) => {
+      const key = this.seed + ":" + site2.id;
+      let castle = this.castleCache.get(key);
+      if (!castle) {
+        castle = describeCastle(site2, (x2, z2) => this.height(x2, z2));
+        if (this.castleCache.size >= 256)
+          this.castleCache.delete(this.castleCache.keys().next().value);
+        this.castleCache.set(key, castle);
+      }
+      return castle;
+    });
   }
   biome(x, z) {
     if (this.dimension === "nether") return "Pustkowia Netheru";
@@ -1865,6 +2449,10 @@ var World = class {
     return n < 0.34 ? "Kryszta\u0142owe groty" : n > 0.62 ? "Bujne jaskinie" : "Jaskinie naciekowe";
   }
   biomeAt(x, y, z) {
+    if (this.dimension === "overworld") {
+      const castle = this.castlesNearby(x, z, 0).find((c) => x >= c.bounds.minX && x <= c.bounds.maxX && z >= c.bounds.minZ && z <= c.bounds.maxZ && y >= c.y - 1);
+      if (castle) return castle.name;
+    }
     return this.dimension === "overworld" && y < this.height(x, z) - 5 ? this.caveType(x, z) : this.biome(x, z);
   }
   height(x, z) {
@@ -1947,12 +2535,12 @@ var World = class {
           this.raw(c, x, h + 6, z, 16);
         }
         if (this.dimension === "overworld") {
-          const random = hash2(wx, wz, this.seed + 18);
-          if (biome.id === "snow" && random > 0.995) {
+          const random2 = hash2(wx, wz, this.seed + 18);
+          if (biome.id === "snow" && random2 > 0.995) {
             for (let y = h + 1; y < h + 9; y++) this.raw(c, x, y, z, 60);
           }
-          if (h < WATER - 1 && biome.id === "ocean" && random > 0.88) this.raw(c, x, h + 1, z, 74);
-          if (h >= WATER && Math.hypot(wx, wz) > 27 && biome.flower && random > 0.88) {
+          if (h < WATER - 1 && biome.id === "ocean" && random2 > 0.88) this.raw(c, x, h + 1, z, 74);
+          if (h >= WATER && Math.hypot(wx, wz) > 27 && biome.flower && random2 > 0.88) {
             const flower = biome.id === "flower" ? [67, 68, 69, 70][Math.floor(hash2(wx, wz, 17) * 4) % 4] : biome.flower;
             this.raw(c, x, h + 1, z, flower);
             if (flower === 59) for (let y = h + 2; y < h + 5; y++) this.raw(c, x, y, z, 59);
@@ -2006,6 +2594,8 @@ var World = class {
       }
     this.structures(c);
     this.landmarks(c);
+    for (const castle of this.castlesNearby(ox + 7.5, oz + 7.5, 8))
+      generateCastleChunk(castle, c, this.seed);
     const prefix = this.dimension + ":";
     for (const [key, id] of Object.entries(this.edits)) {
       if (!key.startsWith(prefix)) continue;
@@ -2051,7 +2641,8 @@ var World = class {
           box(x, base + 1, z + 3, 1, 2, 1, 0);
           for (let a = 0; a < 3; a++) box(x - 4 + a, base + 4 + a, z - 4, 9 - a * 2, 1, 9, 47);
           put(x - 2, base + 1, z - 2, 61);
-          put(x + 1, base + 1, z - 2, 62);
+          put(x + 1, base + 1, z - 1, 190);
+          put(x + 1, base + 1, z - 2, 194);
           put(x, base + 3, z, 48);
           for (let i = 0; i < 5; i++) box(x - 1, base - i, z + 4 + i, 3, 1, 1, 9);
         } else if (b2.id === "mushroom" || b2.id === "crystal") {
@@ -2119,7 +2710,8 @@ var World = class {
         put(hx + 4, y + 1, hz + 1, 30);
         put(hx + 3, y + 3, hz + 3, 48);
         put(hx + 1, y + 1, hz + 4, 61);
-        put(hx + 4, y + 1, hz + 2, 62);
+        put(hx + 4, y + 1, hz + 3, 190);
+        put(hx + 4, y + 1, hz + 2, 194);
       }
       const wellY = this.height(4, 4);
       box(2, wellY, 2, 5, 1, 5, 40);
@@ -2201,10 +2793,17 @@ var World = class {
   set(x, y, z, id, flow = false) {
     if (y <= 0 || y >= HEIGHT) return;
     const c = this.chunk(Math.floor(x / 16), Math.floor(z / 16));
+    const previous = this.get(x, y, z);
+    const partner = previous !== id ? bedPartner(previous, x, y, z) : null;
     this.raw(c, (x % 16 + 16) % 16, y, (z % 16 + 16) % 16, id);
     this.edits[this.dimension + ":" + x + "," + y + "," + z] = id;
     if (!flow) delete this.waterLevels[this.dimension + ":" + x + "," + y + "," + z];
     this.onEdit?.(x, y, z);
+    if (partner) {
+      this.chunk(Math.floor(partner.x / 16), Math.floor(partner.z / 16));
+      if (this.get(partner.x, partner.y, partner.z) === partner.id)
+        this.set(partner.x, partner.y, partner.z, 0, flow);
+    }
     c.dirty = true;
     for (const [dx, dz] of [
       [-1, 0],
@@ -2258,11 +2857,18 @@ var World = class {
     return true;
   }
   solid(x, y, z) {
-    return !!BLOCKS[this.get(x, y, z)]?.solid;
+    const id = this.get(x, y, z);
+    return !!BLOCKS[id]?.solid && pointInside(id, x - Math.floor(x), y - Math.floor(y), z - Math.floor(z));
   }
   surface(x, z) {
     this.chunk(Math.floor(x / 16), Math.floor(z / 16));
-    for (let y = HEIGHT - 2; y >= 0; y--) if (this.solid(x, y, z)) return y + 1;
+    const fx = Number.isInteger(x) ? 0.5 : x - Math.floor(x), fz = Number.isInteger(z) ? 0.5 : z - Math.floor(z);
+    for (let y = HEIGHT - 2; y >= 0; y--) {
+      const id = this.get(x, y, z);
+      if (!BLOCKS[id]?.solid) continue;
+      const tops = boxList(id).filter((b2) => fx >= b2[0] && fx <= b2[3] && fz >= b2[2] && fz <= b2[5]).map((b2) => b2[4]);
+      if (tops.length) return y + Math.max(...tops);
+    }
     return 1;
   }
   switch(d) {
@@ -2346,12 +2952,12 @@ var FluidSystem = class {
         const n = this.level(x + dx, y, z + dz);
         if (n === 0) sources++;
         if (n < 0 || n === 7) continue;
-        const supported = w.solid(x + dx, y - 1, z + dz) || this.level(x + dx, y - 1, z + dz) === 0;
+        const supported = !!BLOCKS[w.get(x + dx, y - 1, z + dz)]?.solid || this.level(x + dx, y - 1, z + dz) === 0;
         if (!supported) continue;
         const candidate = n === 8 ? 1 : n + 1;
         if (candidate <= 7 && (desired < 0 || candidate < desired)) desired = candidate;
       }
-      if (sources >= 2 && w.solid(x, y - 1, z)) desired = 0;
+      if (sources >= 2 && BLOCKS[w.get(x, y - 1, z)]?.solid) desired = 0;
     }
     if (level === desired) return;
     const stateKey = this.key(x, y, z);
@@ -2429,10 +3035,11 @@ var Mob = class {
       "ghast",
       "piglin",
       "blaze",
-      "slime"
+      "slime",
+      "knight"
     ].includes(kind);
     this.flying = ["ghast", "blaze", "bee"].includes(kind);
-    this.hp = kind === "enderman" ? 40 : kind === "ghast" ? 30 : 20;
+    this.hp = kind === "knight" ? 44 : kind === "enderman" ? 40 : kind === "ghast" ? 30 : 20;
     this.speed = this.hostile ? 1.9 : 1;
     this.group.position.set(x, world.surface(x, z) + (this.flying ? 7 : 0), z);
     this.make();
@@ -2474,6 +3081,7 @@ var Mob = class {
   eyeContact = 0;
   /** Multiplayer provocation belongs to one player, never whichever bystander is closest. */
   angerTarget = "";
+  guard;
   hurtTime = 0;
   get hurt() {
     return this.hurtTime;
@@ -2625,7 +3233,7 @@ var Mob = class {
       cube(g, "#273622", 0, 1.73, -0.331, 0.18, 0.3, 0.02);
       for (const x of [-0.13, 0.13]) cube(g, "#273622", x, 1.62, -0.331, 0.15, 0.2, 0.02);
     } else {
-      const end = k === "enderman", skin = end ? "#25242f" : k === "zombie" ? "#698255" : k === "skeleton" ? "#cdc7b8" : "#b99a81", shirt = k === "zombie" ? "#538d95" : k === "piglin" ? "#805e43" : skin, legs = k === "zombie" ? "#615b8a" : skin;
+      const end = k === "enderman", skin = end ? "#25242f" : k === "zombie" ? "#698255" : k === "skeleton" ? "#cdc7b8" : k === "knight" ? "#a9b5bf" : "#b99a81", shirt = k === "zombie" ? "#538d95" : k === "piglin" ? "#805e43" : k === "knight" ? "#6f8593" : skin, legs = k === "zombie" ? "#615b8a" : k === "knight" ? "#667481" : skin;
       if (k === "skeleton") {
         cube(g, skin, 0, 1.23, 0.08, 0.13, 0.76, 0.13);
         for (const y of [1.03, 1.23, 1.43]) cube(g, skin, 0, y, 0, 0.57, 0.09, 0.31);
@@ -2667,7 +3275,7 @@ var Mob = class {
     const g = this.group, k = this.kind;
     this.baseScale.copy(g.scale);
     const animal = ["sheep", "cow", "pig", "chicken", "fox"].includes(k);
-    const humanoid = ["zombie", "skeleton", "piglin", "enderman", "creeper"].includes(k);
+    const humanoid = ["zombie", "skeleton", "piglin", "enderman", "creeper", "knight"].includes(k);
     if (animal || humanoid || k === "frog" || k === "bee") {
       this.head.position.set(
         0,
@@ -2730,10 +3338,10 @@ var Mob = class {
     });
   }
   /** Small surface details share cube geometry and one instanced draw per color and joint. */
-  patches(parent, color, boxes, glow = false) {
-    const mesh = new THREE.InstancedMesh(cubeGeo, mat(color, glow), boxes.length);
+  patches(parent, color, boxes2, glow = false) {
+    const mesh = new THREE.InstancedMesh(cubeGeo, mat(color, glow), boxes2.length);
     const transform = new THREE.Object3D();
-    boxes.forEach(([x, y, z, w, h, d], i) => {
+    boxes2.forEach(([x, y, z, w, h, d], i) => {
       transform.position.set(x, y, z);
       transform.scale.set(w, h, d);
       transform.updateMatrix();
@@ -2759,7 +3367,7 @@ var Mob = class {
       d,
       glow
     );
-    if (["zombie", "skeleton", "piglin", "enderman"].includes(k)) {
+    if (["zombie", "skeleton", "piglin", "enderman", "knight"].includes(k)) {
       this.arms = this.legs.slice(2);
       for (const [i, arm] of this.arms.entries()) {
         const original = arm.children[0];
@@ -2799,7 +3407,38 @@ var Mob = class {
         arm.name = i ? "right-arm" : "left-arm";
       }
     }
-    if (k === "zombie") {
+    if (k === "knight") {
+      face("#596b79", 0, 2.25, 0, 0.73, 0.12, 0.68);
+      face("#c1cbd0", 0, 2.12, -0.34, 0.7, 0.15, 0.09);
+      face("#27333e", 0, 1.98, -0.348, 0.57, 0.09, 0.06);
+      face("#aabac4", 0, 1.81, -0.35, 0.66, 0.24, 0.08);
+      face("#d5dde0", 0, 2.01, -0.405, 0.06, 0.55, 0.045);
+      face("#8e313b", 0, 2.42, 0.05, 0.13, 0.3, 0.48);
+      cube(g, "#abbcc5", 0, 1.29, -0.185, 0.67, 0.61, 0.08);
+      cube(g, "#88343f", 0, 1.14, -0.235, 0.33, 0.46, 0.025);
+      cube(g, "#dbc58d", 0, 1.16, -0.252, 0.06, 0.27, 0.025);
+      cube(g, "#dbc58d", 0, 1.19, -0.252, 0.2, 0.06, 0.025);
+      cube(g, "#394651", 0, 0.9, 0, 0.68, 0.13, 0.41);
+      for (const arm of this.arms) cube(arm, "#bbc7ce", 0, -0.04, 0, 0.36, 0.25, 0.39);
+      for (const leg of this.legs.slice(0, 2))
+        cube(leg, "#849ba9", 0, -0.43, -0.035, 0.29, 0.38, 0.33);
+      const sword = new THREE.Group();
+      sword.name = "knight-sword";
+      this.hands[1].add(sword);
+      cube(sword, "#594237", 0, -0.04, 0, 0.08, 0.22, 0.08);
+      cube(sword, "#cbb577", 0, -0.17, 0, 0.36, 0.065, 0.12);
+      cube(sword, "#cbd8e1", 0, -0.61, 0, 0.14, 0.82, 0.055);
+      cube(sword, "#eef7f8", -0.055, -0.61, -0.01, 0.025, 0.82, 0.06);
+      cube(sword, "#dce7e9", 0, -1.07, 0, 0.075, 0.12, 0.045);
+      const shield = new THREE.Group();
+      shield.name = "knight-shield";
+      shield.position.set(-0.08, -0.12, -0.14);
+      this.hands[0].add(shield);
+      cube(shield, "#b8c5cb", 0, 0, 0, 0.62, 0.91, 0.12);
+      cube(shield, "#88343f", 0, 0.04, -0.072, 0.49, 0.7, 0.04);
+      cube(shield, "#d9c18a", 0, 0.07, -0.102, 0.07, 0.53, 0.028);
+      cube(shield, "#d9c18a", 0, 0.12, -0.102, 0.36, 0.065, 0.028);
+    } else if (k === "zombie") {
       face("#41583b", 0, 2.16, -0.295, 0.64, 0.15, 0.025);
       face("#394732", 0.06, 1.8, -0.302, 0.32, 0.07, 0.025);
       face("#92a77a", -0.09, 1.77, -0.318, 0.09, 0.045, 0.025);
@@ -2965,6 +3604,10 @@ var Mob = class {
         0
       );
     }
+    if (this.kind === "knight" && this.arms[0]) {
+      this.arms[0].rotation.set(0.95, -0.2, -0.15, "YXZ");
+      this.elbows[0].rotation.x = 0.22;
+    }
     if (this.bow) {
       const ranged = this.rangedAttack && progress >= 0 && progress < 1;
       if (ranged) {
@@ -3075,6 +3718,18 @@ var Mob = class {
     for (const m of this.skinMaterials) m.material.dispose();
     this.skinMaterials = [];
   }
+  guardFloor(x, z, from, world) {
+    for (let y = Math.floor((from + 1) * 2) / 2; y >= from - 2; y -= 0.5) {
+      if (!world.solid(x, y - 0.04, z)) continue;
+      let clear = true;
+      for (const dx of [-0.27, 0.27])
+        for (const dz of [-0.27, 0.27])
+          for (const dy of [0.08, 1.15, 2.35])
+            if (world.solid(x + dx, y + dy, z + dz)) clear = false;
+      if (clear) return y;
+    }
+    return Infinity;
+  }
   update(dt, _t, player, world, damage, shoot, explode, observer) {
     this.elapsed += dt;
     const t = this.elapsed, k = this.kind, pos = this.group.position;
@@ -3103,8 +3758,12 @@ var Mob = class {
       this.attackClock = 0;
       if (this.eyeContact <= 0) this.angerTarget = "";
     }
-    const dist = pos.distanceTo(player), alert = this.hostile && (k !== "enderman" || this.anger > 0) && dist < 27, ranged = ["skeleton", "ghast", "blaze"].includes(k);
+    const territory = !this.guard || Math.hypot(player.x - this.guard.home[0], player.z - this.guard.home[2]) <= this.guard.radius;
+    const returnHome = k === "knight" && this.guard && Math.hypot(pos.x - this.guard.post[0], pos.z - this.guard.post[2]) > 3;
+    const dist = pos.distanceTo(player), alert = this.hostile && territory && (k !== "enderman" || this.anger > 0) && dist < 27, ranged = ["skeleton", "ghast", "blaze"].includes(k);
     if (alert) this.heading = Math.atan2(player.x - pos.x, player.z - pos.z);
+    else if (returnHome)
+      this.heading = Math.atan2(this.guard.post[0] - pos.x, this.guard.post[2] - pos.z);
     else if (this.timer <= 0) {
       this.heading += Math.random() * 2.5 - 1.25;
       this.timer = 2 + Math.random() * 5;
@@ -3115,7 +3774,12 @@ var Mob = class {
       if (before > 0.34 && this.attackClock <= 0.34) {
         if (this.rangedAttack) {
           if (dist < 30) shoot(pos.clone().add(new THREE.Vector3(0, 1.5, 0)));
-        } else if (dist < 2.65) damage(k === "enderman" ? 4 : 2);
+        } else if (dist < 2.65 && (k !== "knight" || alert && clearDamagePath(
+          pos.clone().add(new THREE.Vector3(0, 1.4, 0)),
+          player.clone().add(new THREE.Vector3(0, 1.3, 0)),
+          (x, y, z) => world.solid(x, y, z)
+        )))
+          damage(k === "knight" ? 5 : k === "enderman" ? 4 : 2);
       }
     } else if (alert && this.attackCooldown <= 0 && k !== "creeper" && (dist < 2.1 || ranged && dist > 4)) {
       this.rangedAttack = ranged && dist > 4;
@@ -3131,7 +3795,7 @@ var Mob = class {
       }
     }
     const graze = !this.hostile && !this.flying && Math.sin(t * 0.65) < -0.35;
-    const walk = alert ? dist > (ranged ? 7 : 1.6) && this.attackClock <= 0.1 : !graze && Math.sin(t * 0.7) > -0.3;
+    const walk = alert ? dist > (ranged ? 7 : 1.6) && this.attackClock <= 0.1 : !!returnHome || !graze && Math.sin(t * 0.7) > (k === "knight" ? 0.75 : -0.3);
     this.state = this.hurt > 0 ? "hurt" : this.attackClock > 0 ? "attack" : this.fuse > 0.1 ? "fuse" : walk ? "walk" : graze ? "graze" : "idle";
     const previous = pos.clone(), speed = this.speed * (this.hurt > 0 ? -2 : alert ? 1.25 : 1);
     if (walk || this.hurt > 0) {
@@ -3140,7 +3804,7 @@ var Mob = class {
         pos.x = nx;
         pos.z = nz;
       } else {
-        const floor = world.surface(nx, nz);
+        const floor = k === "knight" ? this.guardFloor(nx, nz, pos.y, world) : world.surface(nx, nz);
         if (floor - pos.y < 1.25 && floor > 1 && world.get(nx, floor, nz) !== 7 && world.get(nx, floor, nz) !== 15) {
           pos.x = nx;
           pos.z = nz;
@@ -4006,7 +4670,7 @@ function createHuntEnvironment(worldFor, ensure = () => {
 }
 
 // lib/net-protocol.ts
-var PROTOCOL = 2;
+var PROTOCOL = 3;
 var MAX_PLAYERS = 16;
 var FACE_FRAME_MAX_LENGTH = 4e5;
 var FACE_FRAME_INTERVAL = 1 / 3;
@@ -4088,6 +4752,9 @@ var Room = class {
         wake(x, y, z);
         const key = dimension + ":" + [x, y, z];
         if (world.get(x, y, z) !== 29 && this.furnaces[key]) this.removeFurnace(key);
+        for (const p of this.players.values())
+          if (p.bedRest?.dimension === dimension && !bedRestValid(world, p.bedRest))
+            this.endBedRest(p);
         this.changes.set(key, [
           dimension,
           x,
@@ -4129,6 +4796,7 @@ var Room = class {
   chat = [];
   drops = [];
   pendingDrops = [];
+  castleDefeated = /* @__PURE__ */ new Set();
   facePeers = /* @__PURE__ */ new Map();
   shots = [];
   dragon = new Dragon();
@@ -4245,6 +4913,9 @@ var Room = class {
       this.players.set(id, p);
     }
     p.nick = nick;
+    this.endBedRest(p, true, false);
+    this.cancelEating(p, false);
+    p.usingFood = false;
     p.skin = skin;
     p.seen = this.now();
     this.restoredProvocations.delete(id);
@@ -4290,8 +4961,91 @@ var Room = class {
       seen: p.seen,
       health: p.health,
       difficulty: p.difficulty,
-      equipment: { ...p.equipment }
+      equipment: { ...p.equipment },
+      bedRest: p.bedRest ?? null,
+      bedRestRevision: p.bedRestRevision ?? 0,
+      eating: this.eatingState(p)
     };
+  }
+  standingPosition(p, rest) {
+    const world = this.ensure(rest.dimension, rest.foot[0], rest.foot[2]);
+    const exit = bedRestExit(world, rest, p.bedEntry);
+    if (exit) return [...exit];
+    const spawn = this.ensure("overworld", 8, 22);
+    return [8.5, spawn.surface(8.5, 22.5) + 0.05, 22.5];
+  }
+  playerEye(p) {
+    return p.bedRest ? new THREE2.Vector3(...bedRestEye(p.bedRest)) : vec(p.p).add(new THREE2.Vector3(0, p.crouch ? 1.3 : 1.62, 0));
+  }
+  playerBody(p, standingHeight = 1) {
+    if (!p.bedRest) return vec(p.p).add(new THREE2.Vector3(0, standingHeight, 0));
+    const pose = bedRestPose(p.bedRest);
+    return new THREE2.Vector3(...pose.p).add(
+      new THREE2.Vector3(-Math.sin(pose.yaw), 0, -Math.cos(pose.yaw))
+    );
+  }
+  restPacket(p) {
+    return {
+      type: "bedRest",
+      state: p.bedRest ?? null,
+      revision: p.bedRestRevision ?? 0,
+      p: [...p.p],
+      yaw: p.yaw,
+      clock: this.clock
+    };
+  }
+  /** Release occupancy immediately; a disconnected profile must never resume lying after reload. */
+  endBedRest(p, relocate = true, notify = true) {
+    const rest = p.bedRest;
+    if (!rest) return;
+    if (relocate) {
+      p.p = this.standingPosition(p, rest);
+      p.dimension = rest.dimension;
+    }
+    p.bedRest = null;
+    p.bedRestRevision = (p.bedRestRevision ?? 0) + 1;
+    p.bedEntry = void 0;
+    p.bedStartedAt = void 0;
+    p.moving = p.sprinting = p.crouch = p.swing = p.blocking = false;
+    p.swingProgress = -1;
+    p.grounded = true;
+    if (notify) this.send(p.id, this.restPacket(p));
+  }
+  tickBedRest() {
+    for (const p of this.players.values()) {
+      const rest = p.bedRest;
+      if (!rest) continue;
+      const world = this.region(rest.dimension).world;
+      if (p.health <= 0 || this.now() - p.seen >= 12e3 || p.dimension !== rest.dimension || !bedRestValid(world, rest)) {
+        this.endBedRest(p, p.health > 0);
+        continue;
+      }
+      p.p = [...rest.p];
+      p.moving = p.sprinting = p.crouch = p.swing = p.blocking = false;
+      p.bedStartedAt ??= this.now() - rest.elapsed * 1e3;
+      const elapsed = Math.max(rest.elapsed, (this.now() - p.bedStartedAt) / 1e3);
+      const progress = advanceBedRest(rest, Math.max(0, elapsed - rest.elapsed), this.clock);
+      this.clock = progress.clock;
+      if (progress.skipped) this.send(p.id, this.restPacket(p));
+    }
+  }
+  eatingState(p) {
+    const use = p.foodUse;
+    return use ? {
+      id: use.id,
+      progress: Math.max(0, Math.min(1, (this.now() - use.startedAt) / (EAT_DURATION * 1e3)))
+    } : null;
+  }
+  /** Session IDs make late cancellation packets harmless to the next bite. */
+  cancelEating(p, notify = true) {
+    const use = p.foodUse;
+    if (!use) return;
+    p.foodUse = void 0;
+    if (notify) this.send(p.id, { type: "eating", state: null, session: use.session });
+  }
+  canContinueEating(p) {
+    const use = p.foodUse;
+    return !!use && p.active && p.health > 0 && !p.bedRest && p.usingFood === true && use.dimension === p.dimension && use.id === p.held && this.owns(p, use.id) && Number(p.profile.food ?? 20) < 20 && this.now() - p.seen < 12e3 && this.now() - use.lastHeldAt <= 750;
   }
   clearFace(id) {
     const previous = this.facePeers.get(id);
@@ -4352,7 +5106,9 @@ var Room = class {
     const p = this.players.get(id);
     if (!p) return;
     if (validVec(m.p) && m.p[1] > -100 && m.p[1] < 200 && DIMENSIONS_NET.includes(m.dimension)) {
-      p.p = m.p;
+      const leftBed = !!p.bedRest && m.dimension !== p.dimension;
+      if (leftBed) this.endBedRest(p, false, false);
+      p.p = p.bedRest ? [...p.bedRest.p] : m.p;
       p.dimension = m.dimension;
       p.yaw = Number.isFinite(m.yaw) ? Number(m.yaw) : 0;
       p.pitch = Math.max(-1.54, Math.min(1.54, Number(m.pitch) || 0));
@@ -4370,10 +5126,21 @@ var Room = class {
       p.held = Number.isInteger(m.held) && (BLOCKS[Number(m.held)] || ITEMS.some((i) => i.id === m.held)) ? Number(m.held) : 0;
       if (p.held > 0 && !this.owns(p, p.held)) p.held = 0;
       p.blocking = p.active && !!m.blocking && p.held === 126;
+      p.usingFood = p.active && m.usingFood === true;
+      if (p.foodUse) {
+        if (!this.canContinueEating(p)) this.cancelEating(p);
+        else p.foodUse.lastHeldAt = this.now();
+      }
       p.grounded = !!m.grounded;
+      if (p.bedRest) {
+        p.moving = p.sprinting = p.crouch = p.swing = p.blocking = false;
+        p.swingProgress = -1;
+        p.grounded = true;
+      }
       p.armor = p.equipment.chest;
       p.seen = this.now();
       this.ensure(p.dimension, p.p[0], p.p[2]);
+      if (leftBed) this.send(p.id, this.restPacket(p));
     }
   }
   profile(id, m) {
@@ -4403,6 +5170,17 @@ var Room = class {
       equipment: { ...p.equipment }
     };
     p.profile.health = health;
+    delete p.profile.bedRest;
+    delete p.profile.eating;
+    delete p.profile.foodUse;
+    delete p.profile.usingFood;
+    if (p.bedSpawnPosition) {
+      const [x, y, z] = p.bedSpawnPosition;
+      p.profile.adventure = {
+        ...typeof p.profile.adventure === "object" ? p.profile.adventure : {},
+        spawn: { x, y, z }
+      };
+    }
   }
   owns(p, id, n = 1) {
     return Number.isInteger(n) && n > 0 && ((p.profile.inventory ?? {})[id] ?? 0) >= n;
@@ -4415,6 +5193,27 @@ var Room = class {
       return;
     }
     const reject = (message) => this.reply(p, c, { ok: false, message });
+    if (c.type === "eatCancel") {
+      if (typeof c.session !== "string" || c.session.length > 80)
+        return reject("Nieprawid\u0142owa sesja jedzenia.");
+      if (p.foodUse?.session === c.session) this.cancelEating(p);
+      return this.reply(p, c, { ok: true, eating: null, eatSession: c.session });
+    }
+    if (["mine", "use", "hit", "huntHit", "pvp", "shoot", "drop", "respawn"].includes(c.type))
+      this.cancelEating(p);
+    if (c.type === "restEnd") {
+      this.endBedRest(p);
+      return this.reply(p, c, {
+        ok: true,
+        bedRest: null,
+        bedRestRevision: p.bedRestRevision ?? 0,
+        p: [...p.p],
+        yaw: p.yaw,
+        clock: this.clock
+      });
+    }
+    if (p.bedRest && ["mine", "use", "hit", "huntHit", "pvp", "shoot"].includes(c.type))
+      return reject("Najpierw wsta\u0144 z \u0142\xF3\u017Cka.");
     if (c.type === "difficulty") {
       if (!DIFFICULTIES.includes(c.difficulty))
         return reject("Nieprawid\u0142owa trudno\u015B\u0107.");
@@ -4428,6 +5227,7 @@ var Room = class {
     }
     if (c.type === "respawn") {
       if (p.health > 0) return reject("Posta\u0107 jeszcze \u017Cyje.");
+      this.endBedRest(p, false);
       p.health = 20;
       p.stamina = 100;
       p.spawnUntil = this.now() + 8e3;
@@ -4442,7 +5242,23 @@ var Room = class {
       this.horrorHunt.reset(id);
       this.broadcastHunts();
       this.send(id, { type: "horrorReset" });
-      return this.reply(p, c, { ok: true, health: 20 });
+      if (p.bedSpawn) {
+        const world = this.ensure("overworld", p.bedSpawn[0], p.bedSpawn[2]);
+        const rest = resolveBedRest(world, ...p.bedSpawn);
+        const at = rest ? bedRestExit(world, rest, p.bedSpawnPosition) : null;
+        const fallback = this.ensure("overworld", 8, 22);
+        p.p = at ? [...at] : [8.5, fallback.surface(8.5, 22.5) + 0.05, 22.5];
+        p.dimension = "overworld";
+      }
+      p.bedRestRevision = (p.bedRestRevision ?? 0) + 1;
+      return this.reply(p, c, {
+        ok: true,
+        health: 20,
+        bedRest: null,
+        bedRestRevision: p.bedRestRevision,
+        p: [...p.p],
+        yaw: p.yaw
+      });
     }
     if (c.type === "heal") {
       const rules = difficultyRules(p.pvpUntil > this.now() ? "normal" : p.difficulty);
@@ -4578,16 +5394,44 @@ var Room = class {
       p.profile.inventory = pack.counts();
       return this.reply(p, c, { ok: true });
     }
-    if (c.type === "eat") {
-      if (![106, 107].includes(p.held) || !this.owns(p, p.held)) return reject("Brak jedzenia.");
-      if (this.now() - p.lastAction < 600) return reject("Poczekaj chwil\u0119.");
-      p.lastAction = this.now();
-      p.health = Math.min(20, p.health + 2);
+    if (c.type === "eat") return reject("Przytrzymaj przycisk u\u017Cywania, aby zje\u015B\u0107.");
+    if (c.type === "eatStart") {
+      if (!p.active || p.bedRest || p.usingFood !== true || this.now() - p.seen >= 12e3 || !isFood(p.held) || !this.owns(p, p.held))
+        return reject("Przytrzymaj jedzenie w d\u0142oni.");
+      if (Number(p.profile.food ?? 20) >= 20) return reject("Nie jeste\u015B g\u0142odny.");
+      if (p.foodUse) this.cancelEating(p);
+      p.foodUse = {
+        id: p.held,
+        session: c.req,
+        startedAt: this.now(),
+        lastHeldAt: this.now(),
+        dimension: p.dimension
+      };
+      return this.reply(p, c, { ok: true, eating: this.eatingState(p), eatSession: c.req });
+    }
+    if (c.type === "eatFinish") {
+      const use = p.foodUse;
+      if (!use || c.session !== use.session) return reject("Jedzenie zosta\u0142o przerwane.");
+      if (!this.canContinueEating(p)) {
+        this.cancelEating(p);
+        return reject("Jedzenie zosta\u0142o przerwane.");
+      }
+      const remaining = EAT_DURATION * 1e3 - (this.now() - use.startedAt);
+      if (remaining > 0)
+        return this.reply(p, c, {
+          ok: false,
+          eating: this.eatingState(p),
+          eatSession: use.session,
+          retryAfterMs: Math.ceil(remaining)
+        });
+      p.foodUse = void 0;
       p.profile.food = Math.min(20, Number(p.profile.food ?? 20) + 6);
       return this.reply(p, c, {
         ok: true,
-        cost: [[p.held, 1]],
-        health: p.health,
+        cost: [[use.id, 1]],
+        eaten: use.id,
+        eating: null,
+        eatSession: use.session,
         food: p.profile.food
       });
     }
@@ -4625,7 +5469,7 @@ var Room = class {
         return reject("Tutaj dzia\u0142a ochrona gracza.");
       if (this.now() - p.lastAction < stats.cooldown * 1e3 || p.stamina < stats.stamina)
         return reject("Zaczekaj, a\u017C odzyskasz wytrzyma\u0142o\u015B\u0107.");
-      const from = vec(p.p).add(new THREE2.Vector3(0, 1.5, 0)), to = vec(target.p).add(new THREE2.Vector3(0, 1, 0)), delta = to.clone().sub(from);
+      const from = vec(p.p).add(new THREE2.Vector3(0, 1.5, 0)), to = this.playerBody(target), delta = to.clone().sub(from);
       if (delta.length() > stats.reach + 0.65) return reject("Za daleko.");
       const aim = new THREE2.Vector3(
         -Math.sin(p.yaw) * Math.cos(p.pitch),
@@ -4725,8 +5569,9 @@ var Room = class {
     if (c.type === "chest" || c.type === "chestClick") {
       if (block !== 61) return reject("Nie ma tutaj skrzyni.");
       if (!this.storage[key]) {
-        this.storage[key] = Object.hasOwn(w.edits, key) ? {} : { 107: 3, 113: 16, 110: 2 + Math.floor(hash2(x, z, this.seed) * 4), 116: 6 };
-        if (Math.hypot(x, z) > 29 && !Object.hasOwn(w.edits, key)) {
+        const castle = w.castlesNearby(x, z, 0).map((site2) => castleLoot(site2, x, y, z)).find((loot) => loot !== null);
+        this.storage[key] = Object.hasOwn(w.edits, key) ? {} : castle ?? { 107: 3, 113: 16, 110: 2 + Math.floor(hash2(x, z, this.seed) * 4), 116: 6 };
+        if (!castle && Math.hypot(x, z) > 29 && !Object.hasOwn(w.edits, key)) {
           this.storage[key][119] = 1;
           this.storage[key][111] = 2;
         }
@@ -4825,7 +5670,8 @@ var Room = class {
     }
     if (c.type === "use") {
       const held = p.held;
-      if (block !== 62 && held > 0 && !this.owns(p, held)) return reject("Brak przedmiotu.");
+      if (canonicalBlock(block) !== 62 && held > 0 && !this.owns(p, held))
+        return reject("Brak przedmiotu.");
       if (held === 123) {
         const ok = ignitePortal(w, x, y, z);
         return this.reply(p, c, {
@@ -4841,28 +5687,103 @@ var Room = class {
         w.set(x, y, z, 0);
         return this.reply(p, c, { ok: true, cost: [[114, 1]], grant: [[115, 1]] });
       }
-      if (block === 62) {
-        if (this.clock % 600 > 330) this.clock = Math.ceil(this.clock / 600) * 600 + 90;
-        return this.reply(p, c, { ok: true, message: "Punkt odrodzenia ustawiony.", bed: true });
+      if (canonicalBlock(block) === 62) {
+        if (p.dimension !== "overworld") return reject("Bezpieczny sen jest mo\u017Cliwy w Nadziemiu.");
+        const rest = resolveBedRest(w, x, y, z);
+        if (!rest || this.now() - p.seen >= 12e3)
+          return reject("To \u0142\xF3\u017Cko jest niekompletne albo po\u0142\u0105czenie wygas\u0142o.");
+        for (const other of this.players.values()) {
+          if (other.bedRest && this.now() - other.seen >= 12e3) this.endBedRest(other);
+          if (other.id !== p.id && other.bedRest?.key === rest.key)
+            return reject("To \u0142\xF3\u017Cko jest ju\u017C zaj\u0119te.");
+        }
+        const exit = bedRestExit(w, rest, p.p);
+        if (!exit) return reject("Brakuje bezpiecznego miejsca obok \u0142\xF3\u017Cka.");
+        p.bedEntry = [...p.p];
+        p.bedSpawn = [...rest.foot];
+        p.bedSpawnPosition = [...exit];
+        p.bedRest = rest;
+        p.bedStartedAt = this.now();
+        p.bedRestRevision = (p.bedRestRevision ?? 0) + 1;
+        p.p = [...rest.p];
+        p.yaw = rest.yaw;
+        p.pitch = 0;
+        p.moving = p.sprinting = p.crouch = p.swing = p.blocking = false;
+        p.swingProgress = -1;
+        p.grounded = true;
+        const spawn = { x: exit[0], y: exit[1], z: exit[2] };
+        p.profile.adventure = {
+          ...typeof p.profile.adventure === "object" ? p.profile.adventure : {},
+          spawn
+        };
+        this.send(p.id, this.restPacket(p));
+        return this.reply(p, c, {
+          ok: true,
+          bedRest: rest,
+          bedRestRevision: p.bedRestRevision,
+          p: [...p.p],
+          yaw: p.yaw,
+          spawn,
+          clock: this.clock
+        });
       }
       if (!validVec(c.place) || !c.place.every(Number.isInteger)) return reject("Brak miejsca.");
-      const [a, b2, d] = c.place;
-      if (Math.hypot(a - x, b2 - y, d - z) > 1.01 || b2 < 1 || b2 > 70)
-        return reject("Nieprawid\u0142owe miejsce.");
+      if (SHAPES[block] && (!validVec(c.point) || !validVec(c.normal)) || c.point !== void 0 && !validVec(c.point) || c.normal !== void 0 && !validVec(c.normal))
+        return reject("Nieprawid\u0142owe dane trafienia.");
+      const normal = validVec(c.normal) ? c.normal : [c.place[0] - x, c.place[1] - y, c.place[2] - z];
+      if (!normal.every(Number.isInteger) || Math.abs(normal[0]) + Math.abs(normal[1]) + Math.abs(normal[2]) !== 1)
+        return reject("Nieprawid\u0142owa powierzchnia.");
+      const point = validVec(c.point) ? c.point : [x + 0.5 + normal[0] * 0.5, y + 0.5 + normal[1] * 0.5, z + 0.5 + normal[2] * 0.5];
+      const local = [point[0] - x, point[1] - y, point[2] - z];
+      if (local.some((v) => v < -1e-4 || v > 1.0001))
+        return reject("Nieprawid\u0142owy punkt trafienia.");
+      if (validVec(c.point) && (!pointInside(
+        block,
+        local[0] - normal[0] * 1e-4,
+        local[1] - normal[1] * 1e-4,
+        local[2] - normal[2] * 1e-4
+      ) || pointInside(
+        block,
+        local[0] + normal[0] * 1e-4,
+        local[1] + normal[1] * 1e-4,
+        local[2] + normal[2] * 1e-4
+      )))
+        return reject("Nieprawid\u0142owa powierzchnia bloku.");
+      const proposed = placementFor({
+        held: held === 115 ? 7 : held === 116 ? 64 : held,
+        targetId: block,
+        target: [x, y, z],
+        normal,
+        point,
+        yaw: p.yaw
+      });
+      if (!proposed || proposed.y < 1 || proposed.y > 70) return reject("Nieprawid\u0142owe miejsce.");
+      const [a, b2, d] = [proposed.x, proposed.y, proposed.z];
       this.ensure(p.dimension, a, d);
       const old = w.get(a, b2, d);
-      if (old !== 0 && old !== 7 && !(held === 115 && old === 15) && !BLOCKS[old]?.plant)
-        return reject("To miejsce jest zaj\u0119te.");
-      const next = held === 115 ? 7 : held === 116 ? 64 : held;
+      const replacement = old === 7 || held === 115 && old === 15 || BLOCKS[old]?.plant ? 0 : old;
+      const placement = proposed.merge ? proposed : mergeAdjacentSlab(proposed, replacement);
+      if (!placement) return reject("To miejsce jest zaj\u0119te.");
+      const next = placement.id;
       if (!BLOCKS[next] || next < 1 || next === 13 || next === 18)
         return reject("Nie mo\u017Cna postawi\u0107 tego przedmiotu.");
       if (held === 116 && (p.dimension !== "overworld" || w.get(a, b2 - 1, d) !== 63))
         return reject("Nasiona wymagaj\u0105 ziemi uprawnej.");
       if (BLOCKS[next].solid && [...this.players.values()].some(
-        (q) => this.now() - q.seen < 12e3 && q.dimension === p.dimension && a + 1 > q.p[0] - 0.3 && a < q.p[0] + 0.3 && d + 1 > q.p[2] - 0.3 && d < q.p[2] + 0.3 && b2 + 1 > q.p[1] && b2 < q.p[1] + 1.8
+        (q) => this.now() - q.seen < 12e3 && q.dimension === p.dimension && intersectsBlock(
+          next,
+          a,
+          b2,
+          d,
+          playerBox({ x: q.p[0], y: q.p[1], z: q.p[2] }, q.crouch ? 1.45 : 1.75)
+        )
       ))
         return reject("W tym miejscu stoi gracz.");
-      if (held === 115) {
+      if (canonicalBlock(held) === 62) {
+        const occupied = [...this.players.values()].filter((q) => this.now() - q.seen < 12e3 && q.dimension === p.dimension).map((q) => playerBox({ x: q.p[0], y: q.p[1], z: q.p[2] }, q.crouch ? 1.45 : 1.75));
+        if (!placeBed(w, [a, b2, d], p.yaw, occupied))
+          return reject("\u0141\xF3\u017Cko potrzebuje dw\xF3ch wolnych, podpartych p\xF3l.");
+      } else if (held === 115) {
         if (p.dimension !== "nether" && !w.pourWater(a, b2, d))
           return reject("Brak miejsca na wod\u0119.");
       } else w.set(a, b2, d, next);
@@ -4934,9 +5855,11 @@ var Room = class {
     if (!["fall", "void", "drowning", "hunger", "horror"].includes(reason))
       n *= armorMultiplier(p.equipment);
     p.health = Math.max(0, p.health - n);
+    this.endBedRest(p, p.health > 0);
     p.healed = this.now();
     p.hurtUntil = this.now() + 800;
     if (p.health === 0) {
+      this.cancelEating(p);
       for (const id of Object.values(p.equipment))
         if (id) this.drop(p.dimension, id, 1, [p.p[0], p.p[1] + 0.7, p.p[2]]);
       p.equipment = normalizeEquipment(null);
@@ -5004,10 +5927,11 @@ var Room = class {
     }
     if (m.hp <= 0) {
       m.die();
+      if (m.guard) this.castleDefeated.add(m.guard.id);
       this.drop(
         p.dimension,
-        m.hostile ? 109 : m.kind === "sheep" ? 32 : 107,
-        m.hostile ? 2 : 1,
+        m.kind === "knight" ? 110 : m.hostile ? 109 : m.kind === "sheep" ? 32 : 107,
+        m.kind === "knight" ? 3 : m.hostile ? 2 : 1,
         array(m.group.position)
       );
       if (m.kind === "enderman") this.drop(p.dimension, 111, 1, array(m.group.position));
@@ -5044,6 +5968,26 @@ var Room = class {
   }
   populate(p) {
     const r = this.region(p.dimension), cell = Math.floor(p.p[0] / 48) + "," + Math.floor(p.p[2] / 48);
+    if (p.dimension === "overworld")
+      for (const castle of r.world.castlesNearby(p.p[0], p.p[2], 60)) {
+        for (const guard of castle.guards) {
+          if (r.mobs.size >= 32 || this.castleDefeated.has(guard.id) || r.mobs.has(guard.id))
+            continue;
+          this.ensure(p.dimension, guard.p[0], guard.p[2], 0);
+          if (r.world.solid(guard.p[0], guard.p[1] + 1, guard.p[2]) || r.world.solid(guard.p[0], guard.p[1] + 2, guard.p[2]))
+            continue;
+          const mob = new Mob("knight", guard.p[0], guard.p[2], r.world);
+          mob.group.position.fromArray(guard.p);
+          mob.guard = {
+            id: guard.id,
+            castleId: castle.id,
+            home: [castle.x + 0.5, castle.y, castle.z + 0.5],
+            post: [...guard.p],
+            radius: 42
+          };
+          r.mobs.set(guard.id, mob);
+        }
+      }
     if (r.populated.has(cell) || r.mobs.size >= 24) return;
     r.populated.add(cell);
     const kinds = p.dimension === "end" ? ["enderman", "enderman"] : p.dimension === "nether" ? ["piglin", "blaze", "ghast"] : this.clock % 600 > 350 ? ["zombie", "creeper", "skeleton"] : [r.world.biomeInfo(p.p[0], p.p[2]).mob, "sheep", "pig", "bee"];
@@ -5213,6 +6157,23 @@ var Room = class {
   tick(dt) {
     this.pruneFaces();
     this.clock += dt;
+    this.tickBedRest();
+    for (const p of this.players.values()) {
+      if (p.foodUse && !this.canContinueEating(p)) this.cancelEating(p);
+      if (p.health <= 0 || this.now() - p.seen >= 12e3 || p.hurtUntil > this.now()) continue;
+      const world = this.region(p.dimension).world;
+      const rest = p.bedRest;
+      const box = rest ? [
+        Math.min(rest.foot[0], rest.head[0]) + 0.12,
+        rest.foot[1] + 0.563,
+        Math.min(rest.foot[2], rest.head[2]) + 0.12,
+        Math.max(rest.foot[0], rest.head[0]) + 0.88,
+        rest.foot[1] + 1.13,
+        Math.max(rest.foot[2], rest.head[2]) + 0.88
+      ] : playerBox(vec(p.p), p.crouch ? 1.45 : 1.75);
+      if (touchesCactus((x, y, z) => world.get(x, y, z), box))
+        this.damage(p, 1, [0, 0, 0], "environment", "cactus");
+    }
     this.tickId++;
     const active = [...this.players.values()].filter((p) => this.now() - p.seen < 12e3);
     this.tickFurnaces(dt, active);
@@ -5265,7 +6226,7 @@ var Room = class {
       const observers = targets.filter((p) => p.active).map((p) => ({
         player: p,
         ray: new THREE2.Ray(
-          vec(p.p).add(new THREE2.Vector3(0, p.crouch ? 1.3 : 1.62, 0)),
+          this.playerEye(p),
           new THREE2.Vector3(
             -Math.sin(p.yaw) * Math.cos(p.pitch),
             Math.sin(p.pitch),
@@ -5281,6 +6242,14 @@ var Room = class {
         for (const q of targets)
           if (vec(q.p).distanceToSquared(m.group.position) < vec(p.p).distanceToSquared(m.group.position))
             p = q;
+        if (m.kind === "knight" && m.guard) {
+          const intruders = targets.filter(
+            (q) => Math.hypot(q.p[0] - m.guard.home[0], q.p[2] - m.guard.home[2]) <= m.guard.radius
+          );
+          for (const q of intruders)
+            if (!intruders.includes(p) || vec(q.p).distanceToSquared(m.group.position) < vec(p.p).distanceToSquared(m.group.position))
+              p = q;
+        }
         if (m.kind === "enderman") {
           const provoker = m.anger > 0 ? targets.find((q) => q.id === m.angerTarget) : void 0;
           if (provoker) p = provoker;
@@ -5308,12 +6277,12 @@ var Room = class {
             if (m.group.position.distanceTo(vec(p.p)) < 2.65 && this.lineClear(
               r.world,
               m.group.position.clone().add(new THREE2.Vector3(0, 1.3, 0)),
-              vec(p.p).add(new THREE2.Vector3(0, 1.3, 0))
+              this.playerBody(p, 1.3)
             ))
               this.damage(p, n, [0, 0, 0], "environment", "mob");
           },
           (pos) => {
-            if (this.lineClear(r.world, pos, vec(p.p).add(new THREE2.Vector3(0, 1.3, 0))))
+            if (this.lineClear(r.world, pos, this.playerBody(p, 1.3)))
               this.enemyShot(dimension, pos, p);
           },
           (pos) => {
@@ -5321,7 +6290,7 @@ var Room = class {
               if (vec(q.p).distanceTo(pos) < 4 && this.lineClear(
                 r.world,
                 pos.clone().add(new THREE2.Vector3(0, 1, 0)),
-                vec(q.p).add(new THREE2.Vector3(0, 1, 0))
+                this.playerBody(q)
               ))
                 this.damage(q, 8, [0, 0, 0], "environment", "explosion");
             for (let x = -2; x <= 2; x++)
@@ -5384,7 +6353,7 @@ var Room = class {
       if (s.life <= 0) continue;
       if (!s.owner) {
         for (const p of active)
-          if (p.dimension === s.dimension && p.health > 0 && vec(p.p).add(new THREE2.Vector3(0, 1, 0)).distanceTo(s.p) < 0.9) {
+          if (p.dimension === s.dimension && p.health > 0 && this.playerBody(p).distanceTo(s.p) < 0.9) {
             if (!this.safe(p) && this.now() > p.spawnUntil)
               this.damage(p, s.power ?? 4, [0, 0, 0], "environment", "projectile");
             s.life = 0;
@@ -5414,7 +6383,7 @@ var Room = class {
           }
           if (s.life <= 0) continue;
           for (const target of active)
-            if (target.id !== p.id && target.dimension === s.dimension && target.health > 0 && !this.safe(target) && !this.safe(p) && this.now() > target.spawnUntil && this.now() > p.spawnUntil && vec(target.p).add(new THREE2.Vector3(0, 1, 0)).distanceTo(s.p) < 0.8) {
+            if (target.id !== p.id && target.dimension === s.dimension && target.health > 0 && !this.safe(target) && !this.safe(p) && this.now() > target.spawnUntil && this.now() > p.spawnUntil && this.playerBody(target).distanceTo(s.p) < 0.8) {
               p.pvpUntil = target.pvpUntil = this.now() + 2e4;
               this.damage(
                 target,
@@ -5471,7 +6440,7 @@ var Room = class {
   enemyShot(d, pos, p, power = 4, speed = 12, aim) {
     this.shots.push({
       p: pos.clone(),
-      v: (aim?.clone() ?? vec(p.p).add(new THREE2.Vector3(0, 1, 0))).sub(pos).normalize().multiplyScalar(speed),
+      v: (aim?.clone() ?? this.playerBody(p)).sub(pos).normalize().multiplyScalar(speed),
       dimension: d,
       owner: "",
       life: 6,
@@ -5492,7 +6461,8 @@ var Room = class {
       rangedAttack: m.rangedAttack,
       anger: round(m.anger),
       eyeContact: round(m.eyeContact),
-      angerTarget: m.angerTarget || void 0
+      angerTarget: m.angerTarget || void 0,
+      guard: m.guard
     };
   }
   frame() {
@@ -5562,8 +6532,25 @@ var Room = class {
       horror: this.horror.save(),
       chat: this.chat,
       drops: this.drops,
-      players: [...this.players.values()],
+      players: [...this.players.values()].map((p) => ({
+        ...p,
+        foodUse: void 0,
+        usingFood: false,
+        eating: null,
+        bedStartedAt: void 0,
+        ...p.bedRest ? {
+          p: this.standingPosition(p, p.bedRest),
+          bedRest: null,
+          bedRestRevision: (p.bedRestRevision ?? 0) + 1,
+          bedEntry: void 0,
+          moving: false,
+          sprinting: false,
+          swing: false,
+          blocking: false
+        } : {}
+      })),
       pendingDrops: this.pendingDrops,
+      castleDefeated: [...this.castleDefeated],
       regions: [...this.regions].map(([d, r]) => ({
         d,
         mobs: [...r.mobs].map(([id, m]) => this.mobWire(id, m)),
@@ -5594,6 +6581,11 @@ var Room = class {
     this.crystals = s.crystals;
     this.storage = s.storage;
     this.slots = s.slots ?? {};
+    this.castleDefeated = new Set(
+      (s.castleDefeated ?? []).filter(
+        (id) => typeof id === "string" && id.startsWith("castle:") && id.length < 120
+      )
+    );
     this.chestRevisions = s.chestRevisions ?? {};
     this.furnaces = Object.fromEntries(
       Object.entries(s.furnaces ?? {}).filter(([key]) => /^(overworld|nether|end):-?\d+,-?\d+,-?\d+$/.test(key)).map(([key, state]) => [key, restoreFurnace(state)])
@@ -5638,6 +6630,13 @@ var Room = class {
             armor: equipment.chest,
             seen: 0,
             active: false,
+            bedRest: null,
+            bedRestRevision: (Number(p.bedRestRevision) || 0) + (p.bedRest ? 1 : 0),
+            bedEntry: void 0,
+            bedStartedAt: void 0,
+            foodUse: void 0,
+            usingFood: false,
+            eating: null,
             sprinting: false,
             difficulty,
             hungerClock: Number(p.hungerClock) || 0,
@@ -5676,6 +6675,11 @@ var Room = class {
         m.angerTarget = typeof wire.angerTarget === "string" && wire.angerTarget.length <= 64 ? wire.angerTarget : "";
         if (m.anger > 0 && m.angerTarget) this.restoredProvocations.add(m.angerTarget);
         m.rangedAttack = !!wire.rangedAttack;
+        if (m.kind === "knight" && wire.guard && typeof wire.guard.id === "string" && typeof wire.guard.castleId === "string" && validVec(wire.guard.home) && validVec(wire.guard.post))
+          m.guard = {
+            ...wire.guard,
+            radius: Math.max(8, Math.min(64, Number(wire.guard.radius) || 42))
+          };
         m.dead = wire.dead;
         m.group.position.fromArray(wire.p);
         m.group.rotation.set(...wire.r);
@@ -6026,7 +7030,12 @@ var Gateway = class {
       room.horrorHunt.reset(id);
       room.broadcastHunts();
       const p = room.players.get(id);
-      if (p) p.seen = 0;
+      if (p) {
+        room.endBedRest(p);
+        room.cancelEating(p);
+        p.usingFood = false;
+        p.seen = 0;
+      }
     }
   }
   send(ws, data) {

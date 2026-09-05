@@ -43,7 +43,7 @@ for (const o of outputs) {
 }
 if (!css.length) throw Error("Missing styles.");
 const js = chunks[0].code.replaceAll("</script", "<\\/script");
-const html = `<!doctype html><html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#14231e"><title>BLOCKLAND — wspólny świat</title><style>${css.replaceAll("</style", "<\\/style")}\n:root{--font-geist-sans:Arial;--font-geist-mono:Consolas}#root{width:100%;height:100%}</style></head><body><div id="root"></div><noscript>Włącz JavaScript, aby uruchomić grę.</noscript><script>${js}</script></body></html>`;
+const html = `<!doctype html><html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#14231e"><title>BLOCKLAND — zbuduj własną przygodę</title><meta name="description" content="Odkrywaj trzy wymiary, buduj własny świat i graj ze znajomymi w przeglądarce. Zamki, smoki, kreatywność i przygoda — bez instalacji."><meta property="og:title" content="BLOCKLAND — zbuduj własną przygodę"><meta property="og:description" content="Wielki świat. Twój pierwszy blok. Buduj, odkrywaj i graj razem ze znajomymi w przeglądarce."><meta property="og:type" content="website"><style>${css.replaceAll("</style", "<\\/style")}\n:root{--font-geist-sans:Arial;--font-geist-mono:Consolas}#root{width:100%;height:100%}</style></head><body><div id="root"></div><noscript>Włącz JavaScript, aby uruchomić grę.</noscript><script>${js}</script></body></html>`;
 await fs.mkdir(path.dirname(destination), { recursive: true });
 await fs.writeFile(destination, html, "utf8");
 console.log(

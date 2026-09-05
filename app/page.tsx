@@ -1,5 +1,9 @@
 "use client";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import "./landing.css";
+import "./bed.css";
+import BedStatus from "@/components/bed-status";
+import GameLanding from "@/components/game-landing";
 import { DRAGON_MAX_HEALTH, DRAGON_ENRAGED_HEALTH } from "@/lib/dragon-balance";
 import {
   ArrowUpRight,
@@ -24,6 +28,7 @@ import {
   BookOpen,
   Home as HomeIcon,
   RotateCcw,
+  ArrowDown,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import {
@@ -118,6 +123,11 @@ export default function Home() {
   const mount = useRef<HTMLDivElement>(null),
     game = useRef<Game | null>(null),
     importInput = useRef<HTMLInputElement>(null);
+  const menuScroll = useRef<HTMLDivElement>(null),
+    menuHero = useRef<HTMLDivElement>(null),
+    menuTrigger = useRef<HTMLElement | null>(null),
+    menuScrollPosition = useRef(0);
+  const [heroVisible, setHeroVisible] = useState(true);
   const [menuSkin, setMenuSkin] = useState(true);
   const [runtime, setRuntime] = useState<Game | null>(null);
   const [snap, setSnap] = useState<Snapshot | null>(null),
@@ -151,18 +161,58 @@ export default function Home() {
       game.current = null;
     };
   }, []);
-  const start = (resume = false) => {
-    setPanel("");
-    runtime?.start(mode, resume, Number(seed) || 24680, difficulty);
-  };
-  const open = (p: string) => {
-    if (snap?.started) runtime?.pause(p);
-    else setPanel(p);
-  };
+  const start = useCallback(
+    (resume = false) => {
+      setPanel("");
+      runtime?.start(mode, resume, Number(seed) || 24680, difficulty);
+    },
+    [runtime, mode, seed, difficulty],
+  );
+  const open = useCallback(
+    (p: string) => {
+      if (!snap?.started && document.activeElement instanceof HTMLElement)
+        menuTrigger.current = document.activeElement;
+      if (snap?.started) runtime?.pause(p);
+      else setPanel(p);
+    },
+    [runtime, snap?.started],
+  );
   const close = () => {
     setPanel("");
     if (snap?.started && snap.health > 0) runtime?.resume();
+    else if (menuTrigger.current?.isConnected) menuTrigger.current.focus({ preventScroll: true });
   };
+  const landingPlay = useCallback(() => start(!!snap?.saved), [start, snap?.saved]);
+  const landingMultiplayer = useCallback(() => open("multiplayer"), [open]);
+  const landingSettings = useCallback(() => open("settings"), [open]);
+  const landingWorld = useCallback(() => open("world"), [open]);
+  const landingSkin = useCallback(() => {
+    setMenuSkin(true);
+    menuScroll.current?.scrollTo({
+      top: 0,
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "instant"
+        : "smooth",
+    });
+  }, []);
+  useEffect(() => {
+    if (snap?.started || !runtime || !menuHero.current || !menuScroll.current) return;
+    menuScroll.current.scrollTop = menuScrollPosition.current;
+    if (!window.IntersectionObserver) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        const visible = entry.isIntersecting && entry.intersectionRatio > 0;
+        runtime.previewVisible = visible;
+        setHeroVisible(visible);
+      },
+      { root: menuScroll.current, threshold: [0, 0.001] },
+    );
+    observer.observe(menuHero.current);
+    return () => {
+      observer.disconnect();
+      runtime.previewVisible = true;
+    };
+  }, [runtime, snap?.started]);
   const changeSettings = (v: Partial<GameSettings>) => {
     const next = { ...settings, ...v };
     setSettings(next);
@@ -202,119 +252,157 @@ export default function Home() {
         />
       )}
       {!snap?.started && (
-        <>
-          <div className="cinema-shade" />
-          <header className="game-header">
-            <div className="brand">
-              <Box size={24} />
-              <b>BLOCKLAND</b>
-              <span>BROWSER EDITION</span>
-            </div>
-            <span className="version">
-              <i />
-              Twój świat. Twoje zasady.
-            </span>
-          </header>
-          <section className="start-menu">
-            <div className="eyebrow">
-              <span /> OTWARTY ŚWIAT • NIESKOŃCZONA PRZYGODA
-            </div>
-            <h1>
-              Wielki świat.
-              <br />
-              <em>Twój pierwszy blok.</em>
-            </h1>
-            <p>
-              Odkrywaj nieznane. Buduj po swojemu.
-              <br />
-              Przygoda zaczyna się dokładnie tutaj.
-            </p>
-            <button className="play-button" disabled={!ready} onClick={() => start(!!snap?.saved)}>
-              <Play size={21} fill="currentColor" />
-              {!ready
-                ? "Tworzenie świata…"
-                : snap?.saved
-                  ? "Kontynuuj zapisany świat"
-                  : "Wejdź do świata"}
-              <ArrowUpRight size={21} />
-            </button>
-            {error && (
-              <p className="error-note" role="alert">
-                {error}
-              </p>
-            )}
-            <button
-              className="multiplayer-launch"
-              disabled={!ready}
-              onClick={() => open("multiplayer")}
-            >
-              ◎ Tryb wieloosobowy <span>Jeden publiczny świat →</span>
-            </button>
-            <div className="menu-row">
-              <button onClick={() => open("world")}>
-                {mode === "survival" ? <Mountain size={18} /> : <Sparkles size={18} />}{" "}
-                {snap?.saved ? "Nowy świat" : "Tryb i trudność"}
-              </button>
-              <button onClick={() => open("settings")}>
-                <Settings2 size={18} />
-                Ustawienia
-              </button>
-              <button
-                className="help-small"
-                title="Jak grać"
-                aria-label="Jak grać"
-                onClick={() => open("help")}
-              >
-                <BookOpen size={18} />
-              </button>
-            </div>
-            <button className="skin-menu-button" onClick={() => setMenuSkin((v) => !v)}>
-              <Box size={17} />
-              Skórka i peleryna
-              <ArrowRight size={15} />
-            </button>
-            <div className="world-note">
-              <span className="seed-mark">✦</span>
-              <div>
-                <b>{snap?.saved ? "Twoja przygoda czeka" : "Zielona dolina"}</b>
-                <small>
-                  {snap?.saved
-                    ? "Zapis lokalny · Gotowy do kontynuacji"
-                    : `Nowy świat · ${DIFFICULTY_NAMES[difficulty]} · Ziarno ${seed}`}
-                </small>
+        <div
+          className="menu-scroll"
+          ref={menuScroll}
+          tabIndex={0}
+          aria-label="Menu główne i informacje o grze"
+          onScroll={(e) => {
+            menuScrollPosition.current = e.currentTarget.scrollTop;
+          }}
+        >
+          <div className="menu-hero" ref={menuHero}>
+            <div className="cinema-shade" />
+            <header className="game-header">
+              <div className="brand">
+                <Box size={24} />
+                <b>BLOCKLAND</b>
+                <span>BROWSER EDITION</span>
               </div>
-            </div>
-          </section>
-          {menuSkin && (
-            <section className="menu-skin-panel" aria-label="Edytor skórki i peleryny">
-              <header>
-                <div>
-                  <span>TWÓJ ODKRYWCA</span>
-                  <h2>Skórka i peleryna</h2>
-                </div>
-                <button
-                  onClick={() => setMenuSkin(false)}
-                  aria-label="Zamknij edytor skórki"
-                  title="Schowaj do przycisku w menu"
-                >
-                  <X size={17} />
+              <span className="version">
+                <i />
+                Twój świat. Twoje zasady.
+              </span>
+            </header>
+            <section className="start-menu">
+              <div className="eyebrow">
+                <span /> OTWARTY ŚWIAT • NIESKOŃCZONA PRZYGODA
+              </div>
+              <h1>
+                Wielki świat.
+                <br />
+                <em>Twój pierwszy blok.</em>
+              </h1>
+              <p>
+                Odkrywaj nieznane. Buduj po swojemu.
+                <br />
+                Przygoda zaczyna się dokładnie tutaj.
+              </p>
+              <button
+                className="play-button"
+                disabled={!ready}
+                onClick={() => start(!!snap?.saved)}
+              >
+                <Play size={21} fill="currentColor" />
+                {!ready
+                  ? "Tworzenie świata…"
+                  : snap?.saved
+                    ? "Kontynuuj zapisany świat"
+                    : "Wejdź do świata"}
+                <ArrowUpRight size={21} />
+              </button>
+              {error && (
+                <p className="error-note" role="alert">
+                  {error}
+                </p>
+              )}
+              <button
+                className="multiplayer-launch"
+                disabled={!ready}
+                onClick={() => open("multiplayer")}
+              >
+                ◎ Tryb wieloosobowy <span>Jeden publiczny świat →</span>
+              </button>
+              <div className="menu-row">
+                <button onClick={() => open("world")}>
+                  {mode === "survival" ? <Mountain size={18} /> : <Sparkles size={18} />}{" "}
+                  {snap?.saved ? "Nowy świat" : "Tryb i trudność"}
                 </button>
-              </header>
-              <SkinEditor />
+                <button onClick={() => open("settings")}>
+                  <Settings2 size={18} />
+                  Ustawienia
+                </button>
+                <button
+                  className="help-small"
+                  title="Jak grać"
+                  aria-label="Jak grać"
+                  onClick={() => open("help")}
+                >
+                  <BookOpen size={18} />
+                </button>
+              </div>
+              <button className="skin-menu-button" onClick={() => setMenuSkin((v) => !v)}>
+                <Box size={17} />
+                Skórka i peleryna
+                <ArrowRight size={15} />
+              </button>
+              <div className="world-note">
+                <span className="seed-mark">✦</span>
+                <div>
+                  <b>{snap?.saved ? "Twoja przygoda czeka" : "Zielona dolina"}</b>
+                  <small>
+                    {snap?.saved
+                      ? "Zapis lokalny · Gotowy do kontynuacji"
+                      : `Nowy świat · ${DIFFICULTY_NAMES[difficulty]} · Ziarno ${seed}`}
+                  </small>
+                </div>
+              </div>
             </section>
-          )}
-          <div className="scene-caption">
-            <span>01 / 03</span>
-            <b>Nadziemie</b>
-            <p>Każdy horyzont to nowy początek.</p>
+            {menuSkin && (
+              <section className="menu-skin-panel" aria-label="Edytor skórki i peleryny">
+                <header>
+                  <div>
+                    <span>TWÓJ ODKRYWCA</span>
+                    <h2>Skórka i peleryna</h2>
+                  </div>
+                  <button
+                    onClick={() => setMenuSkin(false)}
+                    aria-label="Zamknij edytor skórki"
+                    title="Schowaj do przycisku w menu"
+                  >
+                    <X size={17} />
+                  </button>
+                </header>
+                <SkinEditor presentationActive={heroVisible} />
+              </section>
+            )}
+            <div className="scene-caption">
+              <span>01 / 03</span>
+              <b>Nadziemie</b>
+              <p>Każdy horyzont to nowy początek.</p>
+            </div>
+            <footer className="menu-footer">
+              <span>STWÓRZ COŚ, CO ZOSTANIE.</span>
+              <span>
+                WASD · Ruch <i /> Mysz · Rozglądanie <i /> E · Ekwipunek
+              </span>
+            </footer>
+            <button
+              className="lp-scroll-cue"
+              aria-label="Przewiń i poznaj możliwości gry"
+              onClick={() =>
+                document.getElementById("poznaj-blockland")?.scrollIntoView({
+                  behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+                    ? "instant"
+                    : "smooth",
+                })
+              }
+            >
+              <span>POZNAJ ŚWIAT</span>
+              <ArrowDown size={13} />
+            </button>
           </div>
-          <footer className="menu-footer">
-            <span>STWÓRZ COŚ, CO ZOSTANIE.</span>
-            <span>
-              WASD · Ruch <i /> Mysz · Rozglądanie <i /> E · Ekwipunek
-            </span>
-          </footer>
-        </>
+          <GameLanding
+            ready={ready}
+            saved={!!snap?.saved}
+            scroller={menuScroll}
+            onPlay={landingPlay}
+            onMultiplayer={landingMultiplayer}
+            onSkin={landingSkin}
+            onSettings={landingSettings}
+            onWorld={landingWorld}
+          />
+        </div>
       )}
       {runtime?.net && <NetworkHUD game={runtime} open={open} />}
       {snap?.needsCapture && !panel && !localCaught && (
@@ -452,7 +540,7 @@ export default function Home() {
               </p>
             </div>
           )}
-          {snap.active && (
+          {snap.active && !snap.rest && (
             <>
               <div className="crosshair" aria-hidden="true">
                 <i />
@@ -470,6 +558,15 @@ export default function Home() {
             </div>
           )}
           <div className="bottom-hud">
+            {snap.rest && runtime && (
+              <BedStatus
+                elapsed={snap.rest.elapsed}
+                night={snap.night}
+                nightSkipped={snap.rest.nightSkipped}
+                exitKey={keyName(settings.bindings.sneak)}
+                onExit={() => runtime.endRest()}
+              />
+            )}
             {snap.toast && (
               <output className="game-toast">
                 <Sparkles size={16} />
@@ -564,7 +661,9 @@ export default function Home() {
             <i />
             {runtime?.net ? "Zapis na serwerze" : "Autozapis lokalny"}
           </div>
-          {snap.active && runtime && <TouchControls game={runtime} open={open} />}
+          {snap.active && runtime && (
+            <TouchControls game={runtime} open={open} resting={!!snap.rest} />
+          )}
         </>
       )}
       <Dialog

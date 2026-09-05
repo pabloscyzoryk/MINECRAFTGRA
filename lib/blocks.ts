@@ -1,3 +1,4 @@
+import { SHAPES } from "./block-shapes";
 export type Dimension = "overworld" | "nether" | "end";
 export type Mode = "survival" | "creative";
 export type Block = {
@@ -143,6 +144,18 @@ export const BLOCKS: Block[] = [
   b(98, "Blok kwarcu", "#eadfd4", "Budowanie"),
   b(99, "Blok netherytu", "#4c4244", "Rudy"),
 ];
+// Numeric lookup intentionally leaves item IDs 100–169 unoccupied.
+for (const [key, shape] of Object.entries(SHAPES)) {
+  const id = Number(key);
+  if (id === 62 || id === 41) continue;
+  const name =
+    shape.kind === "bed"
+      ? "Łóżko"
+      : shape.kind === "stairs"
+        ? `Schody ${shape.base === 8 ? "dębowe" : "kamienne"}`
+        : `${shape.kind === "double-slab" ? "Podwójny półblok" : "Półblok"} ${shape.base === 8 ? "dębowy" : "kamienny"}`;
+  BLOCKS[id] = b(id, name, BLOCKS[shape.base].color, "Budowanie");
+}
 export const ITEMS = [
   { id: 133, name: "Sztabka złota", color: "#e7ba4c", category: "Surowce" },
   { id: 134, name: "Pył redstone", color: "#d34740", category: "Surowce" },
@@ -229,6 +242,10 @@ export const ITEMS = [
 export const item = (id: number) => BLOCKS[id] ?? ITEMS.find((x) => x.id === id) ?? BLOCKS[0];
 export type Recipe = { out: number; n: number; need: [number, number][] };
 export const RECIPES: Recipe[] = [
+  { out: 170, n: 6, need: [[8, 3]] },
+  { out: 172, n: 4, need: [[8, 6]] },
+  { out: 180, n: 6, need: [[3, 3]] },
+  { out: 182, n: 4, need: [[3, 6]] },
   {
     out: 131,
     n: 1,

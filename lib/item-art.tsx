@@ -1,8 +1,56 @@
 import { BLOCKS, item } from "./blocks";
 import { hash } from "./world";
 import { armorInfo } from "./armor";
+import { drawChestIcon } from "./chest-texture";
+import { drawBedIcon } from "./bed-texture";
+import { canonicalBlock, SHAPES, shapeFaces } from "./block-shapes";
 const cache = new Map<number, string>();
+/** Project real visible slab/stair surfaces, preserving the missing half and the step. */
+function drawShapedIcon(c: CanvasRenderingContext2D, id: number) {
+  const shape = SHAPES[id],
+    base = BLOCKS[shape.base];
+  const project = ([x, y, z]: readonly number[]) => [
+    24 + (x - z) * 20,
+    (shape.kind === "slab" ? 18.75 : 24) + (x + z) * 11 - y * 21,
+  ];
+  const faces = shapeFaces(id)
+    .filter((f) => [0, 2, 4].includes(f.face))
+    .slice();
+  faces.sort((a, b) => {
+    const depth = (f: typeof a) => f.vertices.reduce((sum, p) => sum + p[0] + p[2] + p[1] * 2, 0);
+    return depth(a) - depth(b);
+  });
+  for (const face of faces) {
+    const vertices = face.vertices.map(project);
+    c.save();
+    c.beginPath();
+    vertices.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
+    c.closePath();
+    c.fillStyle = face.face === 2 ? (base.top ?? base.color) : base.color;
+    c.fill();
+    c.strokeStyle = "#342d2799";
+    c.lineWidth = 1.5;
+    c.stroke();
+    c.clip();
+    c.fillStyle = face.face === 0 ? "#00000032" : face.face === 2 ? "#ffffff16" : "#0000000a";
+    c.fillRect(0, 0, 48, 48);
+    c.fillStyle = "#ffffff28";
+    for (let n = 0; n < 13; n++) c.fillRect(5 + hash(n, id) * 37, 4 + hash(n, id + 4) * 40, 3, 1.5);
+    if (shape.base === 8) {
+      c.strokeStyle = "#72523588";
+      c.lineWidth = 1;
+      for (let y = 5; y < 50; y += 7) {
+        c.beginPath();
+        c.moveTo(0, y);
+        c.lineTo(48, y + (face.face === 0 ? -26 : 26));
+        c.stroke();
+      }
+    }
+    c.restore();
+  }
+}
 export function itemArt(id: number): string {
+  id = canonicalBlock(id);
   const old = cache.get(id);
   if (old) return old;
   const canvas = document.createElement("canvas");
@@ -25,7 +73,13 @@ export function itemArt(id: number): string {
     c.lineWidth = 2;
     c.stroke();
   };
-  if (id > 0 && id < BLOCKS.length) {
+  if (id === 61) {
+    drawChestIcon(c);
+  } else if (id === 62) {
+    drawBedIcon(c);
+  } else if (SHAPES[id]) {
+    drawShapedIcon(c, id);
+  } else if (id > 0 && !!BLOCKS[id]) {
     path(
       [
         [24, 3],
@@ -114,11 +168,6 @@ export function itemArt(id: number): string {
       "#00000025",
       "transparent",
     );
-    if (id === 61) {
-      rect(4, 21, 20, 4, "#312518");
-      rect(20, 24, 6, 10, "#e9ce7a");
-      rect(22, 27, 2, 4, "#695123");
-    }
     if (id === 29) {
       rect(9, 27, 12, 9, "#101b20");
       rect(11, 32, 8, 3, "#e88c48");

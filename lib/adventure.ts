@@ -1,4 +1,6 @@
 import type { Game } from "./engine";
+import { Mob } from "./entities";
+import { castleLoot, castleSites, describeCastle, firstCastle } from "./castles";
 import { BIOMES, findBiome } from "./biomes";
 import { hash } from "./world";
 import { fromCounts, chestCounts, type ChestSlots } from "./chest-slots";
@@ -28,6 +30,7 @@ export type AdventureData = {
   crops: Record<string, number>;
   spawn: { x: number; y: number; z: number } | null;
   waypoint: { x: number; z: number; name: string } | null;
+  castleDefeated: string[];
 };
 export const newAdventure = (): AdventureData => ({
   furnaces: {},
@@ -42,6 +45,7 @@ export const newAdventure = (): AdventureData => ({
   crops: {},
   spawn: null,
   waypoint: null,
+  castleDefeated: [],
 });
 export class Adventure {
   data: AdventureData = newAdventure();
@@ -185,6 +189,7 @@ export class Adventure {
     }
     if (this.timer < 1) return;
     this.timer = 0;
+    this.spawnCastleGuards();
     if (g.world.dimension === "overworld") {
       const b = g.world.biomeInfo(g.position.x, g.position.z);
       if (!d.discovered.includes(b.id)) {
@@ -276,6 +281,13 @@ export class Adventure {
           loot[119] = 1;
           loot[111] = 1 + Math.floor(hash(z, x, g.world.seed + 8) * 3);
         }
+        for (const castle of g.world.castlesNearby(x, z, 0)) {
+          const supplies = castleLoot(castle, x, y, z);
+          if (supplies) {
+            loot = supplies;
+            break;
+          }
+        }
         this.data.opened++;
       }
       this.data.storage[key] = loot;
@@ -352,30 +364,9 @@ export class Adventure {
     g.emit();
   }
   bed(x: number, y: number, z: number) {
-    const g = this.game;
-    if (g.world.dimension !== "overworld") {
-      g.notify("Bezpieczny sen jest możliwy w Nadziemiu.");
-      return;
-    }
-    for (const [dx, dz] of [
-      [0, 1],
-      [0, -1],
-      [1, 0],
-      [-1, 0],
-    ])
-      if (!g.world.solid(x + dx, y, z + dz) && !g.world.solid(x + dx, y + 1, z + dz)) {
-        this.data.spawn = { x: x + dx + 0.5, y, z: z + dz + 0.5 };
-        break;
-      }
-    if (g.clock % 600 > 330) {
-      g.clock = Math.ceil(g.clock / 600) * 600 + 90;
-      g.health = Math.min(20, g.health + 6);
-      g.notify("Dzień dobry! Punkt odrodzenia ustawiony przy łóżku.");
-    } else g.notify("Punkt odrodzenia ustawiony. Możesz spać po zmroku.");
-    g.audio.play("craft");
-    g.actionCooldown = 1;
-    g.save(false);
+    return this.game.beginRest(x, y, z);
   }
+
   respawn() {
     this.data.equipment = emptyEquipment();
     this.data.armor = 0;
@@ -407,6 +398,66 @@ export class Adventure {
   clearWaypoint() {
     this.data.waypoint = null;
     this.game.emit();
+  }
+  /** Defenders belong to one landmark and defeated IDs survive dimension changes and reloads. */
+  spawnCastleGuards() {
+    const g = this.game;
+    if (g.net || g.world.dimension !== "overworld") return;
+    for (const mob of g.mobs)
+      if (mob.dead && mob.guard && !this.data.castleDefeated.includes(mob.guard.id))
+        this.data.castleDefeated.push(mob.guard.id);
+    for (const castle of g.world.castlesNearby(g.position.x, g.position.z, 60)) {
+      for (const guard of castle.guards) {
+        if (
+          Math.hypot(guard.p[0] - g.position.x, guard.p[2] - g.position.z) > 82 ||
+          this.data.castleDefeated.includes(guard.id) ||
+          g.mobs.some((m) => m.guard?.id === guard.id)
+        )
+          continue;
+        g.world.chunk(Math.floor(guard.p[0] / 16), Math.floor(guard.p[2] / 16));
+        if (
+          g.world.solid(guard.p[0], guard.p[1] + 1, guard.p[2]) ||
+          g.world.solid(guard.p[0], guard.p[1] + 2, guard.p[2])
+        )
+          continue;
+        const mob = new Mob("knight", guard.p[0], guard.p[2], g.world);
+        mob.group.position.fromArray(guard.p);
+        mob.guard = {
+          id: guard.id,
+          castleId: castle.id,
+          home: [castle.x, castle.y, castle.z],
+          post: [...guard.p],
+          radius: 42,
+        };
+        g.mobs.push(mob);
+        g.scene.add(mob.group);
+      }
+    }
+  }
+  locateCastle(teleport = false) {
+    const g = this.game;
+    if (g.world.dimension !== "overworld") {
+      g.notify("Zamków szukaj w Nadziemiu.");
+      return;
+    }
+    const sites = castleSites(g.world.seed, g.position.x, g.position.z, 600);
+    const site =
+      sites.sort(
+        (a, b) =>
+          Math.hypot(a.x - g.position.x, a.z - g.position.z) -
+          Math.hypot(b.x - g.position.x, b.z - g.position.z),
+      )[0] ?? firstCastle(g.world.seed);
+    const castle = describeCastle(site, (x, z) => g.world.height(x, z));
+    this.data.waypoint = { x: castle.entrance[0], z: castle.entrance[2] + 8, name: castle.name };
+    if (teleport && g.mode === "creative") {
+      const [x, , z] = castle.entrance;
+      g.ensure(x, z + 8, true);
+      g.position.set(x + 0.5, g.world.surface(x, z + 8) + 0.1, z + 8.5);
+      g.velocity.set(0, 0, 0);
+      this.spawnCastleGuards();
+    }
+    g.notify("Cel wyprawy: " + castle.name + ". Zabierz pancerz i zapasy.");
+    g.emit();
   }
   equipArmor(id: number, from?: ArmorSource, expected?: Stack | null) {
     if (!armorSlot(id)) return;
@@ -440,6 +491,15 @@ export class Adventure {
       : [];
     this.data.awards = Array.isArray(value.awards)
       ? value.awards.filter((id) => typeof id === "string")
+      : [];
+    this.data.castleDefeated = Array.isArray(value.castleDefeated)
+      ? [
+          ...new Set(
+            value.castleDefeated.filter(
+              (id) => typeof id === "string" && /^castle:(?:first|-?\d+,-?\d+):guard:\d$/.test(id),
+            ),
+          ),
+        ].slice(0, 4096)
       : [];
     this.data.storage = value.storage && typeof value.storage === "object" ? value.storage : {};
     this.data.crops = value.crops && typeof value.crops === "object" ? value.crops : {};

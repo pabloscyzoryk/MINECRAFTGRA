@@ -27,6 +27,22 @@ const wood = [8, 44, 51, 78, 86],
   planks = [8, 8, 44, 8, 51, 86, 78];
 export const GRID_RECIPES: GridRecipe[] = [
   ...[
+    [8, 170, 172],
+    [3, 180, 182],
+  ].flatMap(([m, slab, stairs]): GridRecipe[] => [
+    { name: "Półbloki", out: slab, n: 6, pattern: [[m, m, m]] },
+    {
+      name: "Schody",
+      out: stairs,
+      n: 4,
+      pattern: [
+        [m, 0, 0],
+        [m, m, 0],
+        [m, m, m],
+      ],
+    },
+  ]),
+  ...[
     [140, 141, 142, 143, 144],
     [133, 145, 146, 147, 148],
     [110, 149, 121, 150, 151],

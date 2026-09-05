@@ -4,7 +4,11 @@ import * as THREE from "three";
 import { Mob, MOB_NAMES, cubeGeo, mat, type MobKind } from "../lib/entities";
 import type { World } from "../lib/world";
 
-const world = { surface: () => 10, get: () => 0 } as unknown as World;
+const world = {
+  surface: () => 10,
+  get: (_x: number, y: number) => (y < 10 ? 3 : 0),
+  solid: (_x: number, y: number) => y < 10,
+} as unknown as World;
 function mob(kind: MobKind) {
   const m = new Mob(kind, 0, 0, world);
   m.elapsed = 1.2;

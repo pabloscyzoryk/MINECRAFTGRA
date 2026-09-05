@@ -49,12 +49,13 @@ test("Remote third-person pose completes in 0.23 seconds and shares the forward 
     model: {
       group: new THREE.Group(),
       head: new THREE.Group(),
+      setBedRest() {},
       pose(_t: number, _moving: boolean, _crouch: boolean, progress: number) {
         phases.push(progress);
       },
     },
     position: new THREE.Vector3(),
-    label: { visible: true },
+    label: { visible: true, position: new THREE.Vector3() },
     swingTime: SWING_DURATION,
     wire: { dimension: "overworld", yaw: 0, pitch: 0, moving: false, crouch: false },
   };

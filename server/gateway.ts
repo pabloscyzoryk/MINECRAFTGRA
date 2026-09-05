@@ -405,7 +405,12 @@ export class Gateway {
       room.horrorHunt.reset(id);
       room.broadcastHunts();
       const p = room.players.get(id);
-      if (p) p.seen = 0;
+      if (p) {
+        room.endBedRest(p);
+        room.cancelEating(p);
+        p.usingFood = false;
+        p.seen = 0;
+      }
     }
   }
   send(ws: WebSocket, data: unknown) {

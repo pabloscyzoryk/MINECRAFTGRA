@@ -5,9 +5,11 @@ import type { Game } from "@/lib/engine";
 export default function TouchControls({
   game,
   open,
+  resting = false,
 }: {
   game: Game;
   open: (panel: string) => void;
+  resting?: boolean;
 }) {
   const pad = useRef<HTMLDivElement>(null),
     pointer = useRef<number | null>(null),
@@ -70,80 +72,85 @@ export default function TouchControls({
           </button>
         )}
       </div>
-      <div
-        ref={pad}
-        className="mobile-stick"
-        onPointerDown={(e) => {
-          e.preventDefault();
-          if (pointer.current !== null) return;
-          pointer.current = e.pointerId;
-          e.currentTarget.setPointerCapture(e.pointerId);
-          move(e.clientX, e.clientY);
-        }}
-        onPointerMove={(e) => {
-          if (pointer.current === e.pointerId) move(e.clientX, e.clientY);
-        }}
-        onPointerUp={(e) => {
-          if (pointer.current === e.pointerId) release();
-        }}
-        onPointerCancel={(e) => {
-          if (pointer.current === e.pointerId) release();
-        }}
-        onLostPointerCapture={(e) => {
-          if (pointer.current === e.pointerId) release();
-        }}
-      >
-        <span style={{ transform: `translate(${stick.x}px,${stick.y}px)` }} />
-      </div>
-      <div className="mobile-actions">
-        <button
-          {...hold(
-            () => {
-              game.leftDown = true;
-              game.attack();
-            },
-            () => {
-              game.leftDown = false;
-              game.mining = 0;
-            },
-          )}
+      {!resting && (
+        <div
+          ref={pad}
+          className="mobile-stick"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            if (pointer.current !== null) return;
+            pointer.current = e.pointerId;
+            e.currentTarget.setPointerCapture(e.pointerId);
+            move(e.clientX, e.clientY);
+          }}
+          onPointerMove={(e) => {
+            if (pointer.current === e.pointerId) move(e.clientX, e.clientY);
+          }}
+          onPointerUp={(e) => {
+            if (pointer.current === e.pointerId) release();
+          }}
+          onPointerCancel={(e) => {
+            if (pointer.current === e.pointerId) release();
+          }}
+          onLostPointerCapture={(e) => {
+            if (pointer.current === e.pointerId) release();
+          }}
         >
-          <Pickaxe />
-          <small>Kop / atak</small>
-        </button>
-        <button
-          {...hold(
-            () => {
-              game.rightDown = true;
-              game.interact();
-            },
-            () => {
-              game.rightDown = false;
-            },
-          )}
-        >
-          <Plus />
-          <small>Postaw / użyj</small>
-        </button>
-        <button
-          {...hold(
-            () => game.keys.add("Space"),
-            () => game.keys.delete("Space"),
-          )}
-        >
-          <ArrowUp />
-          <small>Skok</small>
-        </button>
-        <button
-          {...hold(
-            () => game.keys.add("ShiftLeft"),
-            () => game.keys.delete("ShiftLeft"),
-          )}
-        >
-          <Shield />
-          <small>Kucaj</small>
-        </button>
-      </div>
+          <span style={{ transform: `translate(${stick.x}px,${stick.y}px)` }} />
+        </div>
+      )}
+      {!resting && (
+        <div className="mobile-actions">
+          <button
+            {...hold(
+              () => {
+                game.leftDown = true;
+                game.attack();
+              },
+              () => {
+                game.leftDown = false;
+                game.mining = 0;
+              },
+            )}
+          >
+            <Pickaxe />
+            <small>Kop / atak</small>
+          </button>
+          <button
+            {...hold(
+              () => {
+                game.rightDown = true;
+                game.interact();
+              },
+              () => {
+                game.rightDown = false;
+                game.stopEating();
+              },
+            )}
+          >
+            <Plus />
+            <small>Użyj / jedz</small>
+          </button>
+          <button
+            {...hold(
+              () => game.keys.add("Space"),
+              () => game.keys.delete("Space"),
+            )}
+          >
+            <ArrowUp />
+            <small>Skok</small>
+          </button>
+          <button
+            {...hold(
+              () => game.keys.add("ShiftLeft"),
+              () => game.keys.delete("ShiftLeft"),
+            )}
+          >
+            <Shield />
+            <small>Kucaj</small>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

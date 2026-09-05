@@ -1,3 +1,4 @@
+import { blockShapeGeometry } from "./block-shape-geometry";
 import * as THREE from "three";
 import { item, type Dimension } from "./blocks";
 import { hash } from "./world";
@@ -37,6 +38,7 @@ export class BlockCracks {
   textures: THREE.CanvasTexture[] = [];
   mesh: THREE.Mesh;
   stage = -1;
+  shapeId = -1;
   constructor(scene: THREE.Scene) {
     for (let stage = 0; stage < 10; stage++) {
       const c = document.createElement("canvas");
@@ -88,9 +90,15 @@ export class BlockCracks {
     this.mesh.renderOrder = 3;
     scene.add(this.mesh);
   }
-  update(target: { x: number; y: number; z: number } | null, progress: number) {
+  update(target: { x: number; y: number; z: number; id?: number } | null, progress: number) {
     this.mesh.visible = !!target && progress > 0;
     if (!target || progress <= 0) return;
+    const id = target.id ?? 1;
+    if (this.shapeId !== id) {
+      this.mesh.geometry.dispose();
+      this.mesh.geometry = blockShapeGeometry(id, 0.002);
+      this.shapeId = id;
+    }
     this.mesh.position.set(target.x + 0.5, target.y + 0.5, target.z + 0.5);
     const stage = Math.min(9, Math.floor(progress * 10));
     if (stage !== this.stage) {

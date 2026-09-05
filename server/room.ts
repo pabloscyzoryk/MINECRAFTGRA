@@ -1,4 +1,26 @@
 import * as THREE from "three";
+import {
+  SHAPES,
+  canonicalBlock,
+  placementFor,
+  mergeAdjacentSlab,
+  intersectsBlock,
+  playerBox,
+  pointInside,
+  type V3,
+} from "../lib/block-shapes";
+import { placeBed } from "../lib/bed";
+import { touchesCactus } from "../lib/cactus-contact";
+import { EAT_DURATION, isFood, type FoodId, type EatingWire } from "../lib/eating";
+import {
+  resolveBedRest,
+  bedRestValid,
+  advanceBedRest,
+  bedRestExit,
+  bedRestEye,
+  bedRestPose,
+  type BedRest,
+} from "../lib/bed-rest";
 import { weapon, miningDuration } from "../lib/combat";
 import { harvestAllowed, isMineableBlock, minedResource } from "../lib/mining";
 import {
@@ -23,6 +45,7 @@ import {
   type FurnaceState,
 } from "../lib/furnace";
 import { World, hash } from "../lib/world";
+import { castleLoot } from "../lib/castles";
 import { FluidSystem } from "../lib/fluid";
 import { BLOCKS, ITEMS, type Dimension } from "../lib/blocks";
 import { Mob, Dragon, type MobKind } from "../lib/entities";
@@ -75,6 +98,18 @@ type Player = PlayerWire & {
   sprinting: boolean;
   hungerClock: number;
   pvpUntil: number;
+  bedSpawn?: Vec;
+  bedSpawnPosition?: Vec;
+  bedEntry?: Vec;
+  bedStartedAt?: number;
+  usingFood?: boolean;
+  foodUse?: {
+    id: FoodId;
+    session: string;
+    startedAt: number;
+    lastHeldAt: number;
+    dimension: Dimension;
+  };
 };
 type Region = {
   world: World;
@@ -129,6 +164,7 @@ export class Room {
   chat: { nick: string; text: string; time: number; system?: boolean }[] = [];
   drops: DropWire[] = [];
   pendingDrops: PendingDrop[] = [];
+  castleDefeated = new Set<string>();
   facePeers = new Map<string, { seen: number; sent: number; viewers: Set<string> }>();
   shots: Shot[] = [];
   dragon = new Dragon();
@@ -154,6 +190,9 @@ export class Room {
         wake(x, y, z);
         const key = dimension + ":" + [x, y, z];
         if (world.get(x, y, z) !== 29 && this.furnaces[key]) this.removeFurnace(key);
+        for (const p of this.players.values())
+          if (p.bedRest?.dimension === dimension && !bedRestValid(world, p.bedRest))
+            this.endBedRest(p);
         this.changes.set(key, [
           dimension,
           x,
@@ -278,6 +317,9 @@ export class Room {
       this.players.set(id, p);
     }
     p.nick = nick;
+    this.endBedRest(p, true, false);
+    this.cancelEating(p, false);
+    p.usingFood = false;
     p.skin = skin;
     p.seen = this.now();
     this.restoredProvocations.delete(id);
@@ -324,7 +366,112 @@ export class Room {
       health: p.health,
       difficulty: p.difficulty,
       equipment: { ...p.equipment },
+      bedRest: p.bedRest ?? null,
+      bedRestRevision: p.bedRestRevision ?? 0,
+      eating: this.eatingState(p),
     };
+  }
+  private standingPosition(p: Player, rest: BedRest): Vec {
+    const world = this.ensure(rest.dimension, rest.foot[0], rest.foot[2]);
+    const exit = bedRestExit(world, rest, p.bedEntry);
+    if (exit) return [...exit];
+    const spawn = this.ensure("overworld", 8, 22);
+    return [8.5, spawn.surface(8.5, 22.5) + 0.05, 22.5];
+  }
+  private playerEye(p: Player) {
+    return p.bedRest
+      ? new THREE.Vector3(...bedRestEye(p.bedRest))
+      : vec(p.p).add(new THREE.Vector3(0, p.crouch ? 1.3 : 1.62, 0));
+  }
+  private playerBody(p: Player, standingHeight = 1) {
+    if (!p.bedRest) return vec(p.p).add(new THREE.Vector3(0, standingHeight, 0));
+    const pose = bedRestPose(p.bedRest);
+    return new THREE.Vector3(...pose.p).add(
+      new THREE.Vector3(-Math.sin(pose.yaw), 0, -Math.cos(pose.yaw)),
+    );
+  }
+  private restPacket(p: Player) {
+    return {
+      type: "bedRest",
+      state: p.bedRest ?? null,
+      revision: p.bedRestRevision ?? 0,
+      p: [...p.p],
+      yaw: p.yaw,
+      clock: this.clock,
+    };
+  }
+  /** Release occupancy immediately; a disconnected profile must never resume lying after reload. */
+  endBedRest(p: Player, relocate = true, notify = true) {
+    const rest = p.bedRest;
+    if (!rest) return;
+    if (relocate) {
+      p.p = this.standingPosition(p, rest);
+      p.dimension = rest.dimension;
+    }
+    p.bedRest = null;
+    p.bedRestRevision = (p.bedRestRevision ?? 0) + 1;
+    p.bedEntry = undefined;
+    p.bedStartedAt = undefined;
+    p.moving = p.sprinting = p.crouch = p.swing = p.blocking = false;
+    p.swingProgress = -1;
+    p.grounded = true;
+    if (notify) this.send(p.id, this.restPacket(p));
+  }
+  tickBedRest() {
+    for (const p of this.players.values()) {
+      const rest = p.bedRest;
+      if (!rest) continue;
+      const world = this.region(rest.dimension).world;
+      if (
+        p.health <= 0 ||
+        this.now() - p.seen >= 12000 ||
+        p.dimension !== rest.dimension ||
+        !bedRestValid(world, rest)
+      ) {
+        this.endBedRest(p, p.health > 0);
+        continue;
+      }
+      p.p = [...rest.p];
+      p.moving = p.sprinting = p.crouch = p.swing = p.blocking = false;
+      // Server simulation steps may be clamped under load; sleeping lasts ten real seconds.
+      p.bedStartedAt ??= this.now() - rest.elapsed * 1000;
+      const elapsed = Math.max(rest.elapsed, (this.now() - p.bedStartedAt) / 1000);
+      const progress = advanceBedRest(rest, Math.max(0, elapsed - rest.elapsed), this.clock);
+      this.clock = progress.clock;
+      if (progress.skipped) this.send(p.id, this.restPacket(p));
+    }
+  }
+  private eatingState(p: Player): EatingWire | null {
+    const use = p.foodUse;
+    return use
+      ? {
+          id: use.id,
+          progress: Math.max(0, Math.min(1, (this.now() - use.startedAt) / (EAT_DURATION * 1000))),
+        }
+      : null;
+  }
+  /** Session IDs make late cancellation packets harmless to the next bite. */
+  cancelEating(p: Player, notify = true) {
+    const use = p.foodUse;
+    if (!use) return;
+    p.foodUse = undefined;
+    if (notify) this.send(p.id, { type: "eating", state: null, session: use.session });
+  }
+  private canContinueEating(p: Player) {
+    const use = p.foodUse;
+    return (
+      !!use &&
+      p.active &&
+      p.health > 0 &&
+      !p.bedRest &&
+      p.usingFood === true &&
+      use.dimension === p.dimension &&
+      use.id === p.held &&
+      this.owns(p, use.id) &&
+      Number(p.profile.food ?? 20) < 20 &&
+      this.now() - p.seen < 12000 &&
+      this.now() - use.lastHeldAt <= 750
+    );
   }
   clearFace(id: string) {
     const previous = this.facePeers.get(id);
@@ -404,7 +551,9 @@ export class Room {
       m.p[1] < 200 &&
       DIMENSIONS_NET.includes(m.dimension as Dimension)
     ) {
-      p.p = m.p;
+      const leftBed = !!p.bedRest && m.dimension !== p.dimension;
+      if (leftBed) this.endBedRest(p, false, false);
+      p.p = p.bedRest ? [...p.bedRest.p] : m.p;
       p.dimension = m.dimension as Dimension;
       p.yaw = Number.isFinite(m.yaw) ? Number(m.yaw) : 0;
       p.pitch = Math.max(-1.54, Math.min(1.54, Number(m.pitch) || 0));
@@ -434,11 +583,22 @@ export class Room {
           : 0;
       if (p.held > 0 && !this.owns(p, p.held)) p.held = 0;
       p.blocking = p.active && !!m.blocking && p.held === 126;
+      p.usingFood = p.active && m.usingFood === true;
+      if (p.foodUse) {
+        if (!this.canContinueEating(p)) this.cancelEating(p);
+        else p.foodUse.lastHeldAt = this.now();
+      }
       p.grounded = !!m.grounded;
+      if (p.bedRest) {
+        p.moving = p.sprinting = p.crouch = p.swing = p.blocking = false;
+        p.swingProgress = -1;
+        p.grounded = true;
+      }
       // Equipment is changed only by atomic inventory commands, never by input metadata.
       p.armor = p.equipment.chest;
       p.seen = this.now();
       this.ensure(p.dimension, p.p[0], p.p[2]);
+      if (leftBed) this.send(p.id, this.restPacket(p));
     }
   }
   profile(id: string, m: Record<string, unknown>) {
@@ -470,6 +630,17 @@ export class Room {
     // Profile packets can contain old health from before regeneration or an ACK.
     // Only an explicit, deduplicated environmentDamage command may report local hazards.
     p.profile.health = health;
+    delete p.profile.bedRest;
+    delete p.profile.eating;
+    delete p.profile.foodUse;
+    delete p.profile.usingFood;
+    if (p.bedSpawnPosition) {
+      const [x, y, z] = p.bedSpawnPosition;
+      p.profile.adventure = {
+        ...(typeof p.profile.adventure === "object" ? p.profile.adventure : {}),
+        spawn: { x, y, z },
+      };
+    }
   }
   owns(p: Player, id: number, n = 1) {
     return (
@@ -486,6 +657,27 @@ export class Room {
       return;
     }
     const reject = (message: string) => this.reply(p, c, { ok: false, message });
+    if (c.type === "eatCancel") {
+      if (typeof c.session !== "string" || c.session.length > 80)
+        return reject("Nieprawidłowa sesja jedzenia.");
+      if (p.foodUse?.session === c.session) this.cancelEating(p);
+      return this.reply(p, c, { ok: true, eating: null, eatSession: c.session });
+    }
+    if (["mine", "use", "hit", "huntHit", "pvp", "shoot", "drop", "respawn"].includes(c.type))
+      this.cancelEating(p);
+    if (c.type === "restEnd") {
+      this.endBedRest(p);
+      return this.reply(p, c, {
+        ok: true,
+        bedRest: null,
+        bedRestRevision: p.bedRestRevision ?? 0,
+        p: [...p.p],
+        yaw: p.yaw,
+        clock: this.clock,
+      });
+    }
+    if (p.bedRest && ["mine", "use", "hit", "huntHit", "pvp", "shoot"].includes(c.type))
+      return reject("Najpierw wstań z łóżka.");
     if (c.type === "difficulty") {
       if (!DIFFICULTIES.includes(c.difficulty as Difficulty))
         return reject("Nieprawidłowa trudność.");
@@ -499,6 +691,7 @@ export class Room {
     }
     if (c.type === "respawn") {
       if (p.health > 0) return reject("Postać jeszcze żyje.");
+      this.endBedRest(p, false);
       p.health = 20;
       p.stamina = 100;
       p.spawnUntil = this.now() + 8000;
@@ -513,7 +706,23 @@ export class Room {
       this.horrorHunt.reset(id);
       this.broadcastHunts();
       this.send(id, { type: "horrorReset" });
-      return this.reply(p, c, { ok: true, health: 20 });
+      if (p.bedSpawn) {
+        const world = this.ensure("overworld", p.bedSpawn[0], p.bedSpawn[2]);
+        const rest = resolveBedRest(world, ...p.bedSpawn);
+        const at = rest ? bedRestExit(world, rest, p.bedSpawnPosition) : null;
+        const fallback = this.ensure("overworld", 8, 22);
+        p.p = at ? [...at] : [8.5, fallback.surface(8.5, 22.5) + 0.05, 22.5];
+        p.dimension = "overworld";
+      }
+      p.bedRestRevision = (p.bedRestRevision ?? 0) + 1;
+      return this.reply(p, c, {
+        ok: true,
+        health: 20,
+        bedRest: null,
+        bedRestRevision: p.bedRestRevision,
+        p: [...p.p],
+        yaw: p.yaw,
+      });
     }
     if (c.type === "heal") {
       const rules = difficultyRules(p.pvpUntil > this.now() ? "normal" : p.difficulty);
@@ -686,16 +895,51 @@ export class Room {
       p.profile.inventory = pack.counts();
       return this.reply(p, c, { ok: true });
     }
-    if (c.type === "eat") {
-      if (![106, 107].includes(p.held) || !this.owns(p, p.held)) return reject("Brak jedzenia.");
-      if (this.now() - p.lastAction < 600) return reject("Poczekaj chwilę.");
-      p.lastAction = this.now();
-      p.health = Math.min(20, p.health + 2);
+    if (c.type === "eat") return reject("Przytrzymaj przycisk używania, aby zjeść.");
+    if (c.type === "eatStart") {
+      if (
+        !p.active ||
+        p.bedRest ||
+        p.usingFood !== true ||
+        this.now() - p.seen >= 12000 ||
+        !isFood(p.held) ||
+        !this.owns(p, p.held)
+      )
+        return reject("Przytrzymaj jedzenie w dłoni.");
+      if (Number(p.profile.food ?? 20) >= 20) return reject("Nie jesteś głodny.");
+      if (p.foodUse) this.cancelEating(p);
+      p.foodUse = {
+        id: p.held,
+        session: c.req,
+        startedAt: this.now(),
+        lastHeldAt: this.now(),
+        dimension: p.dimension,
+      };
+      return this.reply(p, c, { ok: true, eating: this.eatingState(p), eatSession: c.req });
+    }
+    if (c.type === "eatFinish") {
+      const use = p.foodUse;
+      if (!use || c.session !== use.session) return reject("Jedzenie zostało przerwane.");
+      if (!this.canContinueEating(p)) {
+        this.cancelEating(p);
+        return reject("Jedzenie zostało przerwane.");
+      }
+      const remaining = EAT_DURATION * 1000 - (this.now() - use.startedAt);
+      if (remaining > 0)
+        return this.reply(p, c, {
+          ok: false,
+          eating: this.eatingState(p),
+          eatSession: use.session,
+          retryAfterMs: Math.ceil(remaining),
+        });
+      p.foodUse = undefined;
       p.profile.food = Math.min(20, Number(p.profile.food ?? 20) + 6);
       return this.reply(p, c, {
         ok: true,
-        cost: [[p.held, 1]],
-        health: p.health,
+        cost: [[use.id, 1]],
+        eaten: use.id,
+        eating: null,
+        eatSession: use.session,
         food: p.profile.food,
       });
     }
@@ -746,7 +990,7 @@ export class Room {
       if (this.now() - p.lastAction < stats.cooldown * 1000 || p.stamina < stats.stamina)
         return reject("Zaczekaj, aż odzyskasz wytrzymałość.");
       const from = vec(p.p).add(new THREE.Vector3(0, 1.5, 0)),
-        to = vec(target.p).add(new THREE.Vector3(0, 1, 0)),
+        to = this.playerBody(target),
         delta = to.clone().sub(from);
       if (delta.length() > stats.reach + 0.65) return reject("Za daleko.");
       const aim = new THREE.Vector3(
@@ -876,10 +1120,14 @@ export class Room {
     if (c.type === "chest" || c.type === "chestClick") {
       if (block !== 61) return reject("Nie ma tutaj skrzyni.");
       if (!this.storage[key]) {
+        const castle = w
+          .castlesNearby(x, z, 0)
+          .map((site) => castleLoot(site, x, y, z))
+          .find((loot) => loot !== null);
         this.storage[key] = Object.hasOwn(w.edits, key)
           ? {}
-          : { 107: 3, 113: 16, 110: 2 + Math.floor(hash(x, z, this.seed) * 4), 116: 6 };
-        if (Math.hypot(x, z) > 29 && !Object.hasOwn(w.edits, key)) {
+          : (castle ?? { 107: 3, 113: 16, 110: 2 + Math.floor(hash(x, z, this.seed) * 4), 116: 6 });
+        if (!castle && Math.hypot(x, z) > 29 && !Object.hasOwn(w.edits, key)) {
           this.storage[key][119] = 1;
           this.storage[key][111] = 2;
         }
@@ -990,7 +1238,8 @@ export class Room {
     }
     if (c.type === "use") {
       const held = p.held;
-      if (block !== 62 && held > 0 && !this.owns(p, held)) return reject("Brak przedmiotu.");
+      if (canonicalBlock(block) !== 62 && held > 0 && !this.owns(p, held))
+        return reject("Brak przedmiotu.");
       if (held === 123) {
         const ok = ignitePortal(w, x, y, z);
         return this.reply(p, c, {
@@ -1006,19 +1255,99 @@ export class Room {
         w.set(x, y, z, 0);
         return this.reply(p, c, { ok: true, cost: [[114, 1]], grant: [[115, 1]] });
       }
-      if (block === 62) {
-        if (this.clock % 600 > 330) this.clock = Math.ceil(this.clock / 600) * 600 + 90;
-        return this.reply(p, c, { ok: true, message: "Punkt odrodzenia ustawiony.", bed: true });
+      if (canonicalBlock(block) === 62) {
+        if (p.dimension !== "overworld") return reject("Bezpieczny sen jest możliwy w Nadziemiu.");
+        const rest = resolveBedRest(w, x, y, z);
+        if (!rest || this.now() - p.seen >= 12000)
+          return reject("To łóżko jest niekompletne albo połączenie wygasło.");
+        for (const other of this.players.values()) {
+          if (other.bedRest && this.now() - other.seen >= 12000) this.endBedRest(other);
+          if (other.id !== p.id && other.bedRest?.key === rest.key)
+            return reject("To łóżko jest już zajęte.");
+        }
+        const exit = bedRestExit(w, rest, p.p);
+        if (!exit) return reject("Brakuje bezpiecznego miejsca obok łóżka.");
+        p.bedEntry = [...p.p];
+        p.bedSpawn = [...rest.foot];
+        p.bedSpawnPosition = [...exit];
+        p.bedRest = rest;
+        p.bedStartedAt = this.now();
+        p.bedRestRevision = (p.bedRestRevision ?? 0) + 1;
+        p.p = [...rest.p];
+        p.yaw = rest.yaw;
+        p.pitch = 0;
+        p.moving = p.sprinting = p.crouch = p.swing = p.blocking = false;
+        p.swingProgress = -1;
+        p.grounded = true;
+        const spawn = { x: exit[0], y: exit[1], z: exit[2] };
+        p.profile.adventure = {
+          ...(typeof p.profile.adventure === "object" ? p.profile.adventure : {}),
+          spawn,
+        };
+        this.send(p.id, this.restPacket(p));
+        return this.reply(p, c, {
+          ok: true,
+          bedRest: rest,
+          bedRestRevision: p.bedRestRevision,
+          p: [...p.p],
+          yaw: p.yaw,
+          spawn,
+          clock: this.clock,
+        });
       }
       if (!validVec(c.place) || !c.place.every(Number.isInteger)) return reject("Brak miejsca.");
-      const [a, b, d] = c.place;
-      if (Math.hypot(a - x, b - y, d - z) > 1.01 || b < 1 || b > 70)
-        return reject("Nieprawidłowe miejsce.");
+      if (
+        (SHAPES[block] && (!validVec(c.point) || !validVec(c.normal))) ||
+        (c.point !== undefined && !validVec(c.point)) ||
+        (c.normal !== undefined && !validVec(c.normal))
+      )
+        return reject("Nieprawidłowe dane trafienia.");
+      const normal: V3 = validVec(c.normal)
+        ? c.normal
+        : [c.place[0] - x, c.place[1] - y, c.place[2] - z];
+      if (
+        !normal.every(Number.isInteger) ||
+        Math.abs(normal[0]) + Math.abs(normal[1]) + Math.abs(normal[2]) !== 1
+      )
+        return reject("Nieprawidłowa powierzchnia.");
+      const point: V3 = validVec(c.point)
+        ? c.point
+        : [x + 0.5 + normal[0] * 0.5, y + 0.5 + normal[1] * 0.5, z + 0.5 + normal[2] * 0.5];
+      const local = [point[0] - x, point[1] - y, point[2] - z];
+      if (local.some((v) => v < -0.0001 || v > 1.0001))
+        return reject("Nieprawidłowy punkt trafienia.");
+      if (
+        validVec(c.point) &&
+        (!pointInside(
+          block,
+          local[0] - normal[0] * 0.0001,
+          local[1] - normal[1] * 0.0001,
+          local[2] - normal[2] * 0.0001,
+        ) ||
+          pointInside(
+            block,
+            local[0] + normal[0] * 0.0001,
+            local[1] + normal[1] * 0.0001,
+            local[2] + normal[2] * 0.0001,
+          ))
+      )
+        return reject("Nieprawidłowa powierzchnia bloku.");
+      const proposed = placementFor({
+        held: held === 115 ? 7 : held === 116 ? 64 : held,
+        targetId: block,
+        target: [x, y, z],
+        normal,
+        point,
+        yaw: p.yaw,
+      });
+      if (!proposed || proposed.y < 1 || proposed.y > 70) return reject("Nieprawidłowe miejsce.");
+      const [a, b, d] = [proposed.x, proposed.y, proposed.z];
       this.ensure(p.dimension, a, d);
       const old = w.get(a, b, d);
-      if (old !== 0 && old !== 7 && !(held === 115 && old === 15) && !BLOCKS[old]?.plant)
-        return reject("To miejsce jest zajęte.");
-      const next = held === 115 ? 7 : held === 116 ? 64 : held;
+      const replacement = old === 7 || (held === 115 && old === 15) || BLOCKS[old]?.plant ? 0 : old;
+      const placement = proposed.merge ? proposed : mergeAdjacentSlab(proposed, replacement);
+      if (!placement) return reject("To miejsce jest zajęte.");
+      const next = placement.id;
       if (!BLOCKS[next] || next < 1 || next === 13 || next === 18)
         return reject("Nie można postawić tego przedmiotu.");
       if (held === 116 && (p.dimension !== "overworld" || w.get(a, b - 1, d) !== 63))
@@ -1029,16 +1358,23 @@ export class Room {
           (q) =>
             this.now() - q.seen < 12000 &&
             q.dimension === p.dimension &&
-            a + 1 > q.p[0] - 0.3 &&
-            a < q.p[0] + 0.3 &&
-            d + 1 > q.p[2] - 0.3 &&
-            d < q.p[2] + 0.3 &&
-            b + 1 > q.p[1] &&
-            b < q.p[1] + 1.8,
+            intersectsBlock(
+              next,
+              a,
+              b,
+              d,
+              playerBox({ x: q.p[0], y: q.p[1], z: q.p[2] }, q.crouch ? 1.45 : 1.75),
+            ),
         )
       )
         return reject("W tym miejscu stoi gracz.");
-      if (held === 115) {
+      if (canonicalBlock(held) === 62) {
+        const occupied = [...this.players.values()]
+          .filter((q) => this.now() - q.seen < 12000 && q.dimension === p.dimension)
+          .map((q) => playerBox({ x: q.p[0], y: q.p[1], z: q.p[2] }, q.crouch ? 1.45 : 1.75));
+        if (!placeBed(w, [a, b, d], p.yaw, occupied))
+          return reject("Łóżko potrzebuje dwóch wolnych, podpartych pól.");
+      } else if (held === 115) {
         if (p.dimension !== "nether" && !w.pourWater(a, b, d))
           return reject("Brak miejsca na wodę.");
       } else w.set(a, b, d, next);
@@ -1121,9 +1457,11 @@ export class Room {
     if (!["fall", "void", "drowning", "hunger", "horror"].includes(reason))
       n *= armorMultiplier(p.equipment);
     p.health = Math.max(0, p.health - n);
+    this.endBedRest(p, p.health > 0);
     p.healed = this.now();
     p.hurtUntil = this.now() + 800;
     if (p.health === 0) {
+      this.cancelEating(p);
       for (const id of Object.values(p.equipment))
         if (id) this.drop(p.dimension, id, 1, [p.p[0], p.p[1] + 0.7, p.p[2]]);
       p.equipment = normalizeEquipment(null);
@@ -1198,10 +1536,11 @@ export class Room {
     }
     if (m.hp <= 0) {
       m.die();
+      if (m.guard) this.castleDefeated.add(m.guard.id);
       this.drop(
         p.dimension,
-        m.hostile ? 109 : m.kind === "sheep" ? 32 : 107,
-        m.hostile ? 2 : 1,
+        m.kind === "knight" ? 110 : m.hostile ? 109 : m.kind === "sheep" ? 32 : 107,
+        m.kind === "knight" ? 3 : m.hostile ? 2 : 1,
         array(m.group.position),
       );
       if (m.kind === "enderman") this.drop(p.dimension, 111, 1, array(m.group.position));
@@ -1239,6 +1578,29 @@ export class Room {
   populate(p: Player) {
     const r = this.region(p.dimension),
       cell = Math.floor(p.p[0] / 48) + "," + Math.floor(p.p[2] / 48);
+    if (p.dimension === "overworld")
+      for (const castle of r.world.castlesNearby(p.p[0], p.p[2], 60)) {
+        for (const guard of castle.guards) {
+          if (r.mobs.size >= 32 || this.castleDefeated.has(guard.id) || r.mobs.has(guard.id))
+            continue;
+          this.ensure(p.dimension, guard.p[0], guard.p[2], 0);
+          if (
+            r.world.solid(guard.p[0], guard.p[1] + 1, guard.p[2]) ||
+            r.world.solid(guard.p[0], guard.p[1] + 2, guard.p[2])
+          )
+            continue;
+          const mob = new Mob("knight", guard.p[0], guard.p[2], r.world);
+          mob.group.position.fromArray(guard.p);
+          mob.guard = {
+            id: guard.id,
+            castleId: castle.id,
+            home: [castle.x + 0.5, castle.y, castle.z + 0.5],
+            post: [...guard.p],
+            radius: 42,
+          };
+          r.mobs.set(guard.id, mob);
+        }
+      }
     if (r.populated.has(cell) || r.mobs.size >= 24) return;
     r.populated.add(cell);
     const kinds: MobKind[] =
@@ -1440,6 +1802,25 @@ export class Room {
   tick(dt: number) {
     this.pruneFaces();
     this.clock += dt;
+    this.tickBedRest();
+    for (const p of this.players.values()) {
+      if (p.foodUse && !this.canContinueEating(p)) this.cancelEating(p);
+      if (p.health <= 0 || this.now() - p.seen >= 12000 || p.hurtUntil > this.now()) continue;
+      const world = this.region(p.dimension).world;
+      const rest = p.bedRest;
+      const box = rest
+        ? ([
+            Math.min(rest.foot[0], rest.head[0]) + 0.12,
+            rest.foot[1] + 0.563,
+            Math.min(rest.foot[2], rest.head[2]) + 0.12,
+            Math.max(rest.foot[0], rest.head[0]) + 0.88,
+            rest.foot[1] + 1.13,
+            Math.max(rest.foot[2], rest.head[2]) + 0.88,
+          ] as const)
+        : playerBox(vec(p.p), p.crouch ? 1.45 : 1.75);
+      if (touchesCactus((x, y, z) => world.get(x, y, z), box))
+        this.damage(p, 1, [0, 0, 0], "environment", "cactus");
+    }
     this.tickId++;
     const active = [...this.players.values()].filter((p) => this.now() - p.seen < 12000);
     this.tickFurnaces(dt, active);
@@ -1509,7 +1890,7 @@ export class Room {
         .map((p) => ({
           player: p,
           ray: new THREE.Ray(
-            vec(p.p).add(new THREE.Vector3(0, p.crouch ? 1.3 : 1.62, 0)),
+            this.playerEye(p),
             new THREE.Vector3(
               -Math.sin(p.yaw) * Math.cos(p.pitch),
               Math.sin(p.pitch),
@@ -1528,6 +1909,19 @@ export class Room {
             vec(p.p).distanceToSquared(m.group.position)
           )
             p = q;
+        if (m.kind === "knight" && m.guard) {
+          const intruders = targets.filter(
+            (q) =>
+              Math.hypot(q.p[0] - m.guard!.home[0], q.p[2] - m.guard!.home[2]) <= m.guard!.radius,
+          );
+          for (const q of intruders)
+            if (
+              !intruders.includes(p) ||
+              vec(q.p).distanceToSquared(m.group.position) <
+                vec(p.p).distanceToSquared(m.group.position)
+            )
+              p = q;
+        }
         if (m.kind === "enderman") {
           const provoker = m.anger > 0 ? targets.find((q) => q.id === m.angerTarget) : undefined;
           if (provoker) p = provoker;
@@ -1563,13 +1957,13 @@ export class Room {
               this.lineClear(
                 r.world,
                 m.group.position.clone().add(new THREE.Vector3(0, 1.3, 0)),
-                vec(p.p).add(new THREE.Vector3(0, 1.3, 0)),
+                this.playerBody(p, 1.3),
               )
             )
               this.damage(p, n, [0, 0, 0], "environment", "mob");
           },
           (pos) => {
-            if (this.lineClear(r.world, pos, vec(p.p).add(new THREE.Vector3(0, 1.3, 0))))
+            if (this.lineClear(r.world, pos, this.playerBody(p, 1.3)))
               this.enemyShot(dimension, pos, p);
           },
           (pos) => {
@@ -1579,7 +1973,7 @@ export class Room {
                 this.lineClear(
                   r.world,
                   pos.clone().add(new THREE.Vector3(0, 1, 0)),
-                  vec(q.p).add(new THREE.Vector3(0, 1, 0)),
+                  this.playerBody(q),
                 )
               )
                 this.damage(q, 8, [0, 0, 0], "environment", "explosion");
@@ -1653,9 +2047,7 @@ export class Room {
           if (
             p.dimension === s.dimension &&
             p.health > 0 &&
-            vec(p.p)
-              .add(new THREE.Vector3(0, 1, 0))
-              .distanceTo(s.p) < 0.9
+            this.playerBody(p).distanceTo(s.p) < 0.9
           ) {
             if (!this.safe(p) && this.now() > p.spawnUntil)
               this.damage(p, s.power ?? 4, [0, 0, 0], "environment", "projectile");
@@ -1696,9 +2088,7 @@ export class Room {
               !this.safe(p) &&
               this.now() > target.spawnUntil &&
               this.now() > p.spawnUntil &&
-              vec(target.p)
-                .add(new THREE.Vector3(0, 1, 0))
-                .distanceTo(s.p) < 0.8
+              this.playerBody(target).distanceTo(s.p) < 0.8
             ) {
               p.pvpUntil = target.pvpUntil = this.now() + 20000;
               this.damage(
@@ -1770,10 +2160,7 @@ export class Room {
   ) {
     this.shots.push({
       p: pos.clone(),
-      v: (aim?.clone() ?? vec(p.p).add(new THREE.Vector3(0, 1, 0)))
-        .sub(pos)
-        .normalize()
-        .multiplyScalar(speed),
+      v: (aim?.clone() ?? this.playerBody(p)).sub(pos).normalize().multiplyScalar(speed),
       dimension: d,
       owner: "",
       life: 6,
@@ -1795,6 +2182,7 @@ export class Room {
       anger: round(m.anger),
       eyeContact: round(m.eyeContact),
       angerTarget: m.angerTarget || undefined,
+      guard: m.guard,
     } as MobWire;
   }
   frame(): FrameWire & {
@@ -1869,8 +2257,27 @@ export class Room {
       horror: this.horror.save(),
       chat: this.chat,
       drops: this.drops,
-      players: [...this.players.values()],
+      players: [...this.players.values()].map((p) => ({
+        ...p,
+        foodUse: undefined,
+        usingFood: false,
+        eating: null,
+        bedStartedAt: undefined,
+        ...(p.bedRest
+          ? {
+              p: this.standingPosition(p, p.bedRest),
+              bedRest: null,
+              bedRestRevision: (p.bedRestRevision ?? 0) + 1,
+              bedEntry: undefined,
+              moving: false,
+              sprinting: false,
+              swing: false,
+              blocking: false,
+            }
+          : {}),
+      })),
       pendingDrops: this.pendingDrops,
+      castleDefeated: [...this.castleDefeated],
       regions: [...this.regions].map(([d, r]) => ({
         d,
         mobs: [...r.mobs].map(([id, m]) => this.mobWire(id, m)),
@@ -1901,6 +2308,11 @@ export class Room {
     this.crystals = s.crystals;
     this.storage = s.storage;
     this.slots = s.slots ?? {};
+    this.castleDefeated = new Set(
+      (s.castleDefeated ?? []).filter(
+        (id) => typeof id === "string" && id.startsWith("castle:") && id.length < 120,
+      ),
+    );
     this.chestRevisions = s.chestRevisions ?? {};
     this.furnaces = Object.fromEntries(
       Object.entries(s.furnaces ?? {})
@@ -1954,6 +2366,13 @@ export class Room {
             armor: equipment.chest,
             seen: 0,
             active: false,
+            bedRest: null,
+            bedRestRevision: (Number(p.bedRestRevision) || 0) + (p.bedRest ? 1 : 0),
+            bedEntry: undefined,
+            bedStartedAt: undefined,
+            foodUse: undefined,
+            usingFood: false,
+            eating: null,
             sprinting: false,
             difficulty,
             hungerClock: Number(p.hungerClock) || 0,
@@ -1996,6 +2415,18 @@ export class Room {
             : "";
         if (m.anger > 0 && m.angerTarget) this.restoredProvocations.add(m.angerTarget);
         m.rangedAttack = !!wire.rangedAttack;
+        if (
+          m.kind === "knight" &&
+          wire.guard &&
+          typeof wire.guard.id === "string" &&
+          typeof wire.guard.castleId === "string" &&
+          validVec(wire.guard.home) &&
+          validVec(wire.guard.post)
+        )
+          m.guard = {
+            ...wire.guard,
+            radius: Math.max(8, Math.min(64, Number(wire.guard.radius) || 42)),
+          };
         m.dead = wire.dead;
         m.group.position.fromArray(wire.p);
         m.group.rotation.set(...wire.r);

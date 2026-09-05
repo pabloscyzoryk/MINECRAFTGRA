@@ -2,6 +2,7 @@ import * as THREE from "three";
 import type { World } from "./world";
 import { DRAGON_MAX_HEALTH, DRAGON_ENRAGED_HEALTH } from "./dragon-balance";
 import { clearDamagePath } from "./player-physics";
+import type { CastleGuardState } from "./castles";
 export type MobObserver = Pick<THREE.Ray, "origin" | "direction">;
 export type MobKind =
   | "sheep"
@@ -18,8 +19,10 @@ export type MobKind =
   | "slime"
   | "fox"
   | "frog"
-  | "bee";
+  | "bee"
+  | "knight";
 export const MOB_NAMES: Record<MobKind, string> = {
+  knight: "Rycerz zamkowy",
   fox: "Lis",
   frog: "Żaba",
   bee: "Pszczoła",
@@ -112,6 +115,7 @@ export class Mob {
   eyeContact = 0;
   /** Multiplayer provocation belongs to one player, never whichever bystander is closest. */
   angerTarget = "";
+  guard?: CastleGuardState;
   private hurtTime = 0;
   get hurt() {
     return this.hurtTime;
@@ -146,9 +150,10 @@ export class Mob {
       "piglin",
       "blaze",
       "slime",
+      "knight",
     ].includes(kind);
     this.flying = ["ghast", "blaze", "bee"].includes(kind);
-    this.hp = kind === "enderman" ? 40 : kind === "ghast" ? 30 : 20;
+    this.hp = kind === "knight" ? 44 : kind === "enderman" ? 40 : kind === "ghast" ? 30 : 20;
     this.speed = this.hostile ? 1.9 : 1;
     this.group.position.set(x, world.surface(x, z) + (this.flying ? 7 : 0), z);
     this.make();
@@ -297,9 +302,18 @@ export class Mob {
             ? "#698255"
             : k === "skeleton"
               ? "#cdc7b8"
-              : "#b99a81",
-        shirt = k === "zombie" ? "#538d95" : k === "piglin" ? "#805e43" : skin,
-        legs = k === "zombie" ? "#615b8a" : skin;
+              : k === "knight"
+                ? "#a9b5bf"
+                : "#b99a81",
+        shirt =
+          k === "zombie"
+            ? "#538d95"
+            : k === "piglin"
+              ? "#805e43"
+              : k === "knight"
+                ? "#6f8593"
+                : skin,
+        legs = k === "zombie" ? "#615b8a" : k === "knight" ? "#667481" : skin;
       if (k === "skeleton") {
         cube(g, skin, 0, 1.23, 0.08, 0.13, 0.76, 0.13);
         for (const y of [1.03, 1.23, 1.43]) cube(g, skin, 0, y, 0, 0.57, 0.09, 0.31);
@@ -342,7 +356,7 @@ export class Mob {
       k = this.kind;
     this.baseScale.copy(g.scale);
     const animal = ["sheep", "cow", "pig", "chicken", "fox"].includes(k);
-    const humanoid = ["zombie", "skeleton", "piglin", "enderman", "creeper"].includes(k);
+    const humanoid = ["zombie", "skeleton", "piglin", "enderman", "creeper", "knight"].includes(k);
     if (animal || humanoid || k === "frog" || k === "bee") {
       this.head.position.set(
         0,
@@ -453,7 +467,7 @@ export class Mob {
         d,
         glow,
       );
-    if (["zombie", "skeleton", "piglin", "enderman"].includes(k)) {
+    if (["zombie", "skeleton", "piglin", "enderman", "knight"].includes(k)) {
       this.arms = this.legs.slice(2);
       for (const [i, arm] of this.arms.entries()) {
         const original = arm.children[0] as THREE.Mesh;
@@ -495,7 +509,38 @@ export class Mob {
         arm.name = i ? "right-arm" : "left-arm";
       }
     }
-    if (k === "zombie") {
+    if (k === "knight") {
+      face("#596b79", 0, 2.25, 0, 0.73, 0.12, 0.68);
+      face("#c1cbd0", 0, 2.12, -0.34, 0.7, 0.15, 0.09);
+      face("#27333e", 0, 1.98, -0.348, 0.57, 0.09, 0.06);
+      face("#aabac4", 0, 1.81, -0.35, 0.66, 0.24, 0.08);
+      face("#d5dde0", 0, 2.01, -0.405, 0.06, 0.55, 0.045);
+      face("#8e313b", 0, 2.42, 0.05, 0.13, 0.3, 0.48);
+      cube(g, "#abbcc5", 0, 1.29, -0.185, 0.67, 0.61, 0.08);
+      cube(g, "#88343f", 0, 1.14, -0.235, 0.33, 0.46, 0.025);
+      cube(g, "#dbc58d", 0, 1.16, -0.252, 0.06, 0.27, 0.025);
+      cube(g, "#dbc58d", 0, 1.19, -0.252, 0.2, 0.06, 0.025);
+      cube(g, "#394651", 0, 0.9, 0, 0.68, 0.13, 0.41);
+      for (const arm of this.arms) cube(arm, "#bbc7ce", 0, -0.04, 0, 0.36, 0.25, 0.39);
+      for (const leg of this.legs.slice(0, 2))
+        cube(leg, "#849ba9", 0, -0.43, -0.035, 0.29, 0.38, 0.33);
+      const sword = new THREE.Group();
+      sword.name = "knight-sword";
+      this.hands[1].add(sword);
+      cube(sword, "#594237", 0, -0.04, 0, 0.08, 0.22, 0.08);
+      cube(sword, "#cbb577", 0, -0.17, 0, 0.36, 0.065, 0.12);
+      cube(sword, "#cbd8e1", 0, -0.61, 0, 0.14, 0.82, 0.055);
+      cube(sword, "#eef7f8", -0.055, -0.61, -0.01, 0.025, 0.82, 0.06);
+      cube(sword, "#dce7e9", 0, -1.07, 0, 0.075, 0.12, 0.045);
+      const shield = new THREE.Group();
+      shield.name = "knight-shield";
+      shield.position.set(-0.08, -0.12, -0.14);
+      this.hands[0].add(shield);
+      cube(shield, "#b8c5cb", 0, 0, 0, 0.62, 0.91, 0.12);
+      cube(shield, "#88343f", 0, 0.04, -0.072, 0.49, 0.7, 0.04);
+      cube(shield, "#d9c18a", 0, 0.07, -0.102, 0.07, 0.53, 0.028);
+      cube(shield, "#d9c18a", 0, 0.12, -0.102, 0.36, 0.065, 0.028);
+    } else if (k === "zombie") {
       face("#41583b", 0, 2.16, -0.295, 0.64, 0.15, 0.025);
       face("#394732", 0.06, 1.8, -0.302, 0.32, 0.07, 0.025);
       face("#92a77a", -0.09, 1.77, -0.318, 0.09, 0.045, 0.025);
@@ -670,6 +715,10 @@ export class Mob {
         0,
       );
     }
+    if (this.kind === "knight" && this.arms[0]) {
+      this.arms[0].rotation.set(0.95, -0.2, -0.15, "YXZ");
+      this.elbows[0].rotation.x = 0.22;
+    }
     if (this.bow) {
       const ranged = this.rangedAttack && progress >= 0 && progress < 1;
       if (ranged) {
@@ -804,6 +853,18 @@ export class Mob {
     for (const m of this.skinMaterials) m.material.dispose();
     this.skinMaterials = [];
   }
+  private guardFloor(x: number, z: number, from: number, world: World) {
+    for (let y = Math.floor((from + 1) * 2) / 2; y >= from - 2; y -= 0.5) {
+      if (!world.solid(x, y - 0.04, z)) continue;
+      let clear = true;
+      for (const dx of [-0.27, 0.27])
+        for (const dz of [-0.27, 0.27])
+          for (const dy of [0.08, 1.15, 2.35])
+            if (world.solid(x + dx, y + dy, z + dz)) clear = false;
+      if (clear) return y;
+    }
+    return Infinity;
+  }
   update(
     dt: number,
     _t: number,
@@ -844,10 +905,19 @@ export class Mob {
       this.attackClock = 0;
       if (this.eyeContact <= 0) this.angerTarget = "";
     }
+    const territory =
+      !this.guard ||
+      Math.hypot(player.x - this.guard.home[0], player.z - this.guard.home[2]) <= this.guard.radius;
+    const returnHome =
+      k === "knight" &&
+      this.guard &&
+      Math.hypot(pos.x - this.guard.post[0], pos.z - this.guard.post[2]) > 3;
     const dist = pos.distanceTo(player),
-      alert = this.hostile && (k !== "enderman" || this.anger > 0) && dist < 27,
+      alert = this.hostile && territory && (k !== "enderman" || this.anger > 0) && dist < 27,
       ranged = ["skeleton", "ghast", "blaze"].includes(k);
     if (alert) this.heading = Math.atan2(player.x - pos.x, player.z - pos.z);
+    else if (returnHome)
+      this.heading = Math.atan2(this.guard!.post[0] - pos.x, this.guard!.post[2] - pos.z);
     else if (this.timer <= 0) {
       this.heading += Math.random() * 2.5 - 1.25;
       this.timer = 2 + Math.random() * 5;
@@ -858,7 +928,17 @@ export class Mob {
       if (before > 0.34 && this.attackClock <= 0.34) {
         if (this.rangedAttack) {
           if (dist < 30) shoot(pos.clone().add(new THREE.Vector3(0, 1.5, 0)));
-        } else if (dist < 2.65) damage(k === "enderman" ? 4 : 2);
+        } else if (
+          dist < 2.65 &&
+          (k !== "knight" ||
+            (alert &&
+              clearDamagePath(
+                pos.clone().add(new THREE.Vector3(0, 1.4, 0)),
+                player.clone().add(new THREE.Vector3(0, 1.3, 0)),
+                (x, y, z) => world.solid(x, y, z),
+              )))
+        )
+          damage(k === "knight" ? 5 : k === "enderman" ? 4 : 2);
       }
     } else if (
       alert &&
@@ -881,7 +961,7 @@ export class Mob {
     const graze = !this.hostile && !this.flying && Math.sin(t * 0.65) < -0.35;
     const walk = alert
       ? dist > (ranged ? 7 : 1.6) && this.attackClock <= 0.1
-      : !graze && Math.sin(t * 0.7) > -0.3;
+      : !!returnHome || (!graze && Math.sin(t * 0.7) > (k === "knight" ? 0.75 : -0.3));
     this.state =
       this.hurt > 0
         ? "hurt"
@@ -903,7 +983,9 @@ export class Mob {
         pos.x = nx;
         pos.z = nz;
       } else {
-        const floor = world.surface(nx, nz);
+        // Keep guards on the courtyard/interior floor, not the highest roof in this column.
+        const floor =
+          k === "knight" ? this.guardFloor(nx, nz, pos.y, world) : world.surface(nx, nz);
         if (
           floor - pos.y < 1.25 &&
           floor > 1 &&
