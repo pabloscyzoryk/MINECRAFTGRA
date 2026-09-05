@@ -11,7 +11,7 @@ export type FurnaceWire = { key: string; state: FurnaceState | null; revision: n
 export type { Difficulty } from "./difficulty";
 export type { HorrorEvent } from "./horror-director";
 export type { HuntWire, HuntPhase } from "./horror-hunt";
-export const PROTOCOL = 3;
+export const PROTOCOL = 4;
 export const SERVER_NAME = "Wspólny świat";
 export const MAX_PLAYERS = 16;
 export const FACE_FRAME_MAX_LENGTH = 400000;

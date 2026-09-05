@@ -70,12 +70,12 @@ function intersectsBlock(id, x, y, z, a) {
     (b2) => a[3] > x + b2[0] + e && a[0] < x + b2[3] - e && a[4] > y + b2[1] + e && a[1] < y + b2[4] - e && a[5] > z + b2[2] + e && a[2] < z + b2[5] - e
   );
 }
-function worldBoxCollision(a, get, solid) {
+function worldBoxCollision(a, get, solid2) {
   for (let x = Math.floor(a[0] + 1e-7); x <= Math.floor(a[3] - 1e-7); x++)
     for (let y = Math.floor(a[1] + 1e-7); y <= Math.floor(a[4] - 1e-7); y++)
       for (let z = Math.floor(a[2] + 1e-7); z <= Math.floor(a[5] - 1e-7); z++) {
         const id = get(x, y, z);
-        if (solid(id) && intersectsBlock(id, x, y, z, a)) return true;
+        if (solid2(id) && intersectsBlock(id, x, y, z, a)) return true;
       }
   return false;
 }
@@ -549,6 +549,55 @@ function touchesCactus(get, a) {
   return false;
 }
 
+// lib/safe-spawn.ts
+var solid = (id) => !!BLOCKS[id]?.solid;
+var hazardous = (id) => id === 7 || id === 15 || id === 13 || id === 18;
+function isSafeStandingPosition(world, p) {
+  if (!p.every(Number.isFinite) || p[1] < 1 || p[1] > 72) return false;
+  const a = playerBox({ x: p[0], y: p[1], z: p[2] }, 1.75);
+  for (let x = Math.floor((a[0] - 0.01) / 16); x <= Math.floor((a[3] + 0.01) / 16); x++)
+    for (let z = Math.floor((a[2] - 0.01) / 16); z <= Math.floor((a[5] + 0.01) / 16); z++)
+      world.chunk?.(x, z);
+  const get = (x, y, z) => world.get(x, y, z);
+  if (worldBoxCollision(a, get, solid) || touchesCactus(get, a)) return false;
+  for (let x = Math.floor(a[0]); x <= Math.floor(a[3]); x++)
+    for (let y = Math.floor(a[1] - 2e-3); y <= Math.floor(a[4]); y++)
+      for (let z = Math.floor(a[2]); z <= Math.floor(a[5]); z++)
+        if (hazardous(get(x, y, z))) return false;
+  return worldBoxCollision(
+    playerBox({ x: p[0], y: p[1] - 2e-3, z: p[2] }, 3e-3),
+    get,
+    (id) => solid(id) && id !== 41 && SHAPES[id]?.kind !== "bed"
+  );
+}
+var SPAWN_OFFSETS = (() => {
+  const offsets = [];
+  for (let x = -32; x <= 32; x++)
+    for (let z = -32; z <= 32; z++) offsets.push({ x, z, distance: x * x + z * z });
+  return offsets.sort((a, b2) => a.distance - b2.distance || a.x - b2.x || a.z - b2.z);
+})();
+function findSafeWorldSpawn(world, originX = 8.5, originZ = 22.5) {
+  if (![originX, originZ].every(Number.isFinite)) return null;
+  for (const offset of SPAWN_OFFSETS) {
+    const x = originX + offset.x, z = originZ + offset.z;
+    world.chunk?.(Math.floor(x / 16), Math.floor(z / 16));
+    const surface = world.surface(x, z);
+    const first = [x, surface, z];
+    if (isSafeStandingPosition(world, first)) return first;
+    for (let y = Math.min(71, Math.floor(surface)); y >= 0; y--) {
+      const id = world.get(Math.floor(x), y, Math.floor(z));
+      if (!solid(id) || id === 41 || SHAPES[id]?.kind === "bed") continue;
+      for (const b2 of boxList(id)) {
+        if (x - Math.floor(x) < b2[0] || x - Math.floor(x) > b2[3] || z - Math.floor(z) < b2[2] || z - Math.floor(z) > b2[5])
+          continue;
+        const candidate = [x, y + b2[4], z];
+        if (candidate[1] !== surface && isSafeStandingPosition(world, candidate)) return candidate;
+      }
+    }
+  }
+  return null;
+}
+
 // lib/eating.ts
 var EAT_DURATION = 1.6;
 function isFood(id) {
@@ -632,21 +681,8 @@ function bedRestPose(rest) {
   };
 }
 function bedRestExit(world, rest, fallback) {
-  const solid = (id) => !!BLOCKS[id]?.solid;
-  const valid = (p) => {
-    if (!p.every(Number.isFinite) || p[1] < 1 || p[1] > 73) return false;
-    const a = playerBox({ x: p[0], y: p[1], z: p[2] }, 1.75);
-    if (worldBoxCollision(a, (x, y, z) => world.get(x, y, z), solid)) return false;
-    for (let y = Math.floor(p[1]); y <= Math.floor(p[1] + 1.75); y++)
-      for (let x = Math.floor(a[0]); x <= Math.floor(a[3]); x++)
-        for (let z = Math.floor(a[2]); z <= Math.floor(a[5]); z++)
-          if ([7, 15].includes(world.get(x, y, z))) return false;
-    return worldBoxCollision(
-      playerBox({ x: p[0], y: p[1] - 2e-3, z: p[2] }, 3e-3),
-      (x, y, z) => world.get(x, y, z),
-      solid
-    );
-  };
+  const solid2 = (id) => !!BLOCKS[id]?.solid;
+  const valid = (p) => isSafeStandingPosition(world, p);
   const cells = [];
   for (let x = rest.foot[0] - 4; x <= rest.foot[0] + 4; x++)
     for (let z = rest.foot[2] - 4; z <= rest.foot[2] + 4; z++) {
@@ -660,7 +696,7 @@ function bedRestExit(world, rest, fallback) {
     const candidates = [];
     for (let y = Math.max(0, rest.foot[1] - 4); y <= Math.min(71, rest.foot[1] + 3); y++) {
       const id = world.get(c.x, y, c.z);
-      if (!solid(id) || SHAPES[id]?.kind === "bed") continue;
+      if (!solid2(id) || SHAPES[id]?.kind === "bed") continue;
       for (const b2 of boxList(id)) candidates.push(y + b2[4]);
     }
     candidates.sort((a, b2) => Math.abs(a - rest.foot[1]) - Math.abs(b2 - rest.foot[1]));
@@ -2986,14 +3022,14 @@ function restoreDragonHealth(hp, previousMax = 300, defeated = false) {
 }
 
 // lib/player-physics.ts
-function clearDamagePath(from, to, solid) {
+function clearDamagePath(from, to, solid2) {
   const dx = to.x - from.x, dy = to.y - from.y, dz = to.z - from.z;
   const length = Math.hypot(dx, dy, dz);
   if (!Number.isFinite(length) || length > 128) return false;
   const steps = Math.max(1, Math.ceil(length / 0.15));
   for (let step = 1; step < steps; step++) {
     const t = step / steps;
-    if (solid(from.x + dx * t, from.y + dy * t, from.z + dz * t)) return false;
+    if (solid2(from.x + dx * t, from.y + dy * t, from.z + dz * t)) return false;
   }
   return true;
 }
@@ -4670,7 +4706,7 @@ function createHuntEnvironment(worldFor, ensure = () => {
 }
 
 // lib/net-protocol.ts
-var PROTOCOL = 3;
+var PROTOCOL = 4;
 var MAX_PLAYERS = 16;
 var FACE_FRAME_MAX_LENGTH = 4e5;
 var FACE_FRAME_INTERVAL = 1 / 3;
@@ -4877,11 +4913,17 @@ var Room = class {
       });
     let p = this.players.get(id);
     if (!p) {
-      const w = this.ensure("overworld", 8, 22);
+      const spawn = this.worldSpawnPosition();
+      if (!spawn)
+        return this.send(id, {
+          type: "error",
+          fatal: true,
+          message: "Brak bezpiecznego miejsca przy pocz\u0105tku \u015Bwiata. Spr\xF3buj ponownie po udro\u017Cnieniu okolicy."
+        });
       p = {
         id,
         nick,
-        p: [8.5, w.surface(8, 22) + 0.05, 22.5],
+        p: spawn,
         yaw: 0.22,
         pitch: 0,
         dimension: "overworld",
@@ -4912,8 +4954,13 @@ var Room = class {
       };
       this.players.set(id, p);
     }
+    if (!this.endBedRest(p, true, false))
+      return this.send(id, {
+        type: "error",
+        fatal: true,
+        message: "Brak bezpiecznego miejsca, aby wsta\u0107. Spr\xF3buj ponownie po udro\u017Cnieniu okolicy \u0142\xF3\u017Cka."
+      });
     p.nick = nick;
-    this.endBedRest(p, true, false);
     this.cancelEating(p, false);
     p.usingFood = false;
     p.skin = skin;
@@ -4928,6 +4975,7 @@ var Room = class {
     p.profile.difficulty = selectedDifficulty;
     p.active = false;
     p.profile.equipment = { ...p.equipment };
+    this.ensure(p.dimension, p.p[0], p.p[2]);
     this.send(id, {
       type: "welcome",
       id,
@@ -4967,12 +5015,16 @@ var Room = class {
       eating: this.eatingState(p)
     };
   }
+  worldSpawnPosition() {
+    const world = this.ensure("overworld", 8, 22);
+    const spawn = findSafeWorldSpawn(world);
+    return spawn ? [...spawn] : null;
+  }
   standingPosition(p, rest) {
     const world = this.ensure(rest.dimension, rest.foot[0], rest.foot[2]);
     const exit = bedRestExit(world, rest, p.bedEntry);
     if (exit) return [...exit];
-    const spawn = this.ensure("overworld", 8, 22);
-    return [8.5, spawn.surface(8.5, 22.5) + 0.05, 22.5];
+    return this.worldSpawnPosition();
   }
   playerEye(p) {
     return p.bedRest ? new THREE2.Vector3(...bedRestEye(p.bedRest)) : vec(p.p).add(new THREE2.Vector3(0, p.crouch ? 1.3 : 1.62, 0));
@@ -4991,15 +5043,19 @@ var Room = class {
       revision: p.bedRestRevision ?? 0,
       p: [...p.p],
       yaw: p.yaw,
-      clock: this.clock
+      dimension: p.dimension,
+      clock: this.clock,
+      food: Number(p.profile.food ?? 20)
     };
   }
   /** Release occupancy immediately; a disconnected profile must never resume lying after reload. */
   endBedRest(p, relocate = true, notify = true) {
     const rest = p.bedRest;
-    if (!rest) return;
+    if (!rest) return true;
     if (relocate) {
-      p.p = this.standingPosition(p, rest);
+      const exit = this.standingPosition(p, rest);
+      if (!exit) return false;
+      p.p = exit;
       p.dimension = rest.dimension;
     }
     p.bedRest = null;
@@ -5010,6 +5066,7 @@ var Room = class {
     p.swingProgress = -1;
     p.grounded = true;
     if (notify) this.send(p.id, this.restPacket(p));
+    return true;
   }
   tickBedRest() {
     for (const p of this.players.values()) {
@@ -5105,6 +5162,11 @@ var Room = class {
   input(id, m) {
     const p = this.players.get(id);
     if (!p) return;
+    if (p.respawnRevision && (!Number.isSafeInteger(m.bedRestRevision) || Number(m.bedRestRevision) < p.respawnRevision || Number(m.bedRestRevision) > (p.bedRestRevision ?? 0))) {
+      p.seen = this.now();
+      this.send(id, this.restPacket(p));
+      return;
+    }
     if (validVec(m.p) && m.p[1] > -100 && m.p[1] < 200 && DIMENSIONS_NET.includes(m.dimension)) {
       const leftBed = !!p.bedRest && m.dimension !== p.dimension;
       if (leftBed) this.endBedRest(p, false, false);
@@ -5174,13 +5236,13 @@ var Room = class {
     delete p.profile.eating;
     delete p.profile.foodUse;
     delete p.profile.usingFood;
-    if (p.bedSpawnPosition) {
-      const [x, y, z] = p.bedSpawnPosition;
-      p.profile.adventure = {
-        ...typeof p.profile.adventure === "object" ? p.profile.adventure : {},
-        spawn: { x, y, z }
-      };
-    }
+    p.profile.adventure = {
+      ...typeof p.profile.adventure === "object" ? p.profile.adventure : {},
+      bedSpawn: p.bedSpawn ? [...p.bedSpawn] : null,
+      ...p.bedSpawnPosition ? {
+        spawn: { x: p.bedSpawnPosition[0], y: p.bedSpawnPosition[1], z: p.bedSpawnPosition[2] }
+      } : {}
+    };
   }
   owns(p, id, n = 1) {
     return Number.isInteger(n) && n > 0 && ((p.profile.inventory ?? {})[id] ?? 0) >= n;
@@ -5202,7 +5264,8 @@ var Room = class {
     if (["mine", "use", "hit", "huntHit", "pvp", "shoot", "drop", "respawn"].includes(c.type))
       this.cancelEating(p);
     if (c.type === "restEnd") {
-      this.endBedRest(p);
+      if (!this.endBedRest(p))
+        return reject("Brak bezpiecznego miejsca obok \u0142\xF3\u017Cka lub pocz\u0105tku \u015Bwiata.");
       return this.reply(p, c, {
         ok: true,
         bedRest: null,
@@ -5227,6 +5290,19 @@ var Room = class {
     }
     if (c.type === "respawn") {
       if (p.health > 0) return reject("Posta\u0107 jeszcze \u017Cyje.");
+      let at = null;
+      if (p.bedSpawn) {
+        const world = this.ensure("overworld", p.bedSpawn[0], p.bedSpawn[2]);
+        const rest = resolveBedRest(world, ...p.bedSpawn);
+        const exit = rest ? bedRestExit(world, rest, p.bedSpawnPosition) : null;
+        at = exit ? [...exit] : null;
+      }
+      const bedAvailable = !!at;
+      at ??= this.worldSpawnPosition();
+      if (!at)
+        return reject(
+          "Brak bezpiecznego miejsca odrodzenia. Spr\xF3buj ponownie po udro\u017Cnieniu okolicy pocz\u0105tku \u015Bwiata."
+        );
       this.endBedRest(p, false);
       p.health = 20;
       p.stamina = 100;
@@ -5242,18 +5318,29 @@ var Room = class {
       this.horrorHunt.reset(id);
       this.broadcastHunts();
       this.send(id, { type: "horrorReset" });
-      if (p.bedSpawn) {
-        const world = this.ensure("overworld", p.bedSpawn[0], p.bedSpawn[2]);
-        const rest = resolveBedRest(world, ...p.bedSpawn);
-        const at = rest ? bedRestExit(world, rest, p.bedSpawnPosition) : null;
-        const fallback = this.ensure("overworld", 8, 22);
-        p.p = at ? [...at] : [8.5, fallback.surface(8.5, 22.5) + 0.05, 22.5];
-        p.dimension = "overworld";
-      }
+      if (bedAvailable) p.bedSpawnPosition = [...at];
+      else p.bedSpawn = p.bedSpawnPosition = void 0;
+      p.p = [...at];
+      p.dimension = "overworld";
+      p.moving = p.sprinting = p.crouch = p.swing = p.blocking = p.usingFood = false;
+      p.swingProgress = -1;
+      p.grounded = true;
+      p.active = false;
+      const spawn = { x: at[0], y: at[1], z: at[2] };
+      p.profile.adventure = {
+        ...typeof p.profile.adventure === "object" ? p.profile.adventure : {},
+        spawn,
+        bedSpawn: p.bedSpawn ? [...p.bedSpawn] : null
+      };
       p.bedRestRevision = (p.bedRestRevision ?? 0) + 1;
+      p.respawnRevision = p.bedRestRevision;
       return this.reply(p, c, {
         ok: true,
         health: 20,
+        food: 20,
+        dimension: p.dimension,
+        spawn,
+        bedSpawn: p.bedSpawn ? [...p.bedSpawn] : null,
         bedRest: null,
         bedRestRevision: p.bedRestRevision,
         p: [...p.p],
@@ -5714,7 +5801,8 @@ var Room = class {
         const spawn = { x: exit[0], y: exit[1], z: exit[2] };
         p.profile.adventure = {
           ...typeof p.profile.adventure === "object" ? p.profile.adventure : {},
-          spawn
+          spawn,
+          bedSpawn: [...rest.foot]
         };
         this.send(p.id, this.restPacket(p));
         return this.reply(p, c, {
@@ -5724,6 +5812,7 @@ var Room = class {
           p: [...p.p],
           yaw: p.yaw,
           spawn,
+          bedSpawn: [...rest.foot],
           clock: this.clock
         });
       }
@@ -6539,7 +6628,7 @@ var Room = class {
         eating: null,
         bedStartedAt: void 0,
         ...p.bedRest ? {
-          p: this.standingPosition(p, p.bedRest),
+          p: this.standingPosition(p, p.bedRest) ?? p.p,
           bedRest: null,
           bedRestRevision: (p.bedRestRevision ?? 0) + 1,
           bedEntry: void 0,
@@ -6634,6 +6723,9 @@ var Room = class {
             bedRestRevision: (Number(p.bedRestRevision) || 0) + (p.bedRest ? 1 : 0),
             bedEntry: void 0,
             bedStartedAt: void 0,
+            bedSpawn: validVec(p.bedSpawn) && p.bedSpawn.every(Number.isInteger) ? [...p.bedSpawn] : void 0,
+            bedSpawnPosition: validVec(p.bedSpawnPosition) ? [...p.bedSpawnPosition] : void 0,
+            respawnRevision: Number.isSafeInteger(p.respawnRevision) && Number(p.respawnRevision) > 0 ? Math.min(Number(p.respawnRevision), Number(p.bedRestRevision) || 0) : void 0,
             foodUse: void 0,
             usingFood: false,
             eating: null,

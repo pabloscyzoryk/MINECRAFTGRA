@@ -8,6 +8,7 @@ import {
   type BedRest,
 } from "./bed-rest";
 import { placeBed } from "./bed";
+import { findSafeWorldSpawn } from "./safe-spawn";
 import { blockShapeGeometry } from "./block-shape-geometry";
 import {
   canonicalBlock,
@@ -640,7 +641,12 @@ export class Game extends WorldRenderer {
         this.mined = 0;
         this.placed = 0;
         this.visited = ["overworld"];
-        this.position.set(8.5, this.world.surface(8, 22) + 0.05, 22.5);
+        const spawn = findSafeWorldSpawn(this.world);
+        if (!spawn) {
+          this.notify("Nie znaleziono bezpiecznego miejsca przy starcie świata.");
+          return;
+        }
+        this.position.fromArray(spawn);
         this.yaw = 0.22;
         this.pitch = 0;
         this.spawnMobs();
@@ -756,6 +762,29 @@ export class Game extends WorldRenderer {
     this.emit();
   }
   respawn() {
+    if (this.net) {
+      this.net.respawn();
+      return;
+    }
+    this.finishRespawn(false);
+  }
+  /** Online calls this only after the authoritative position and successful respawn ACK. */
+  finishRespawn(authoritative = true) {
+    if (!authoritative) {
+      const dimension = this.world.dimension;
+      if (dimension !== "overworld") this.world.switch("overworld");
+      const found = this.adventure.respawn();
+      const spawn = this.position.clone();
+      if (dimension !== "overworld") this.world.switch(dimension);
+      if (!found) {
+        this.notify("Nie znaleziono bezpiecznego miejsca odrodzenia przy starcie świata.");
+        return;
+      }
+      if (dimension !== "overworld") {
+        this.travel("overworld");
+        this.position.copy(spawn);
+      }
+    }
     this.endRest(true);
     this.fallDistance = 0;
     this.resetHorrorHunt();
@@ -763,7 +792,6 @@ export class Game extends WorldRenderer {
     this.horror?.clear();
     this.horrorDirector?.reset("local");
     this.hungerTimer = this.regenerationTimer = 0;
-    this.net?.request({ type: "respawn" });
     this.pack.reset();
     this.inventory = {};
     this.hotbar = Array(9).fill(0);
@@ -771,9 +799,6 @@ export class Game extends WorldRenderer {
     this.food = 20;
     this.oxygen = 20;
     this.velocity.set(0, 0, 0);
-    if (this.world.dimension !== "overworld") this.travel("overworld");
-    this.position.set(8.5, this.world.surface(8, 22) + 0.05, 22.5);
-    this.adventure.respawn();
     this.damageTimer = 2;
     this.resume();
   }
@@ -1676,8 +1701,10 @@ export class Game extends WorldRenderer {
     this.pitch = 0.65;
     this.eyeHeight = 0.35;
     const exit = bedRestExit(this.world, rest, this.restReturn);
-    if (exit && this.adventure?.data)
+    if (exit && this.adventure?.data) {
       this.adventure.data.spawn = { x: exit[0], y: exit[1], z: exit[2] };
+      this.adventure.data.bedSpawn = [...rest.foot];
+    }
     this.updateRestView();
     this.audio.play("craft");
     this.notify(
@@ -1713,8 +1740,11 @@ export class Game extends WorldRenderer {
         ? bedRestExit(this.world, rest, this.restReturn)
         : null);
     if (!exit && rest.dimension === this.world.dimension) {
-      this.ensure(0, 0, true);
-      exit = [0.5, this.world.surface(0.5, 0.5) + 0.01, 0.5];
+      exit = findSafeWorldSpawn(this.world);
+      if (!exit && !authoritative) {
+        this.notify("Brak bezpiecznego miejsca, aby wstać z łóżka.");
+        return;
+      }
     }
     this.rest = null;
     this.restFrameAt = null;

@@ -47,6 +47,8 @@ Menu startowe zachowuje podgląd świata i edytor postaci. Przewiń niżej, aby 
 
 **Kontynuuj zapisany świat** odtwarza wcześniejszy ekwipunek. Puste pola dotyczą nowej postaci i odrodzenia. W trybie kreatywnym przedmioty wybierasz z katalogu dostępnego w ekwipunku. Puste pole na pasku podręcznym oznacza pustą rękę.
 
+Podczas gry HUD pozostawia więcej miejsca na świat. Pasek graczy, czatu, mikrofonu i kamerki znajduje się u góry po lewej. Informacje o świecie, cel przygody, nazwa wskazywanego bloku i przypomnienie sterowania są dostępne pod **Esc → Świat / Dziennik / Sterowanie**. Usunięcie napisu „PvP aktywne” nie zmienia zasad walki między graczami.
+
 ### Schody, półbloki, łóżka i zamki
 
 **Schody dębowe i kamienne** obracają się zgodnie z kierunkiem patrzenia. Kliknięcie górnej połowy bocznej powierzchni albo spodu bloku stawia odwrócone schody lub górny półblok. Dwie połówki tego samego materiału łączą się w pełny blok; po wydobyciu odzyskasz dwa półbloki. Po stopniach wchodzi się płynnie bez skakania, a obrys, pęknięcia i trafienia kursorem odpowiadają ich kształtowi. W księdze receptur znajdziesz oba materiały: trzy deski lub kamienie w rzędzie dają sześć półbloków, a sześć w układzie schodków — cztery schody.
@@ -54,6 +56,8 @@ Menu startowe zachowuje podgląd świata i edytor postaci. Przewiń niżej, aby 
 **Łóżko** jest niskie, ma białą poduszkę, czerwony koc i drewniane nogi oraz zajmuje dwa sąsiednie pola. Przy stawianiu obie części potrzebują miejsca i podparcia. Zniszczenie dowolnej połowy usuwa całe łóżko i daje jeden przedmiot. Kliknij je w Nadziemiu, aby ustawić odrodzenie i fizycznie się położyć. Po 10 sekundach nieprzerwanego leżenia podczas nocy zaczyna się dzień. Wstań klawiszem kucania (domyślnie **Shift**) lub przyciskiem **Wstań**, także na telefonie; wcześniejsze wyjście anuluje odliczanie. Możesz odpoczywać również za dnia. W multiplayer inni widzą leżącą postać, a jedno zajęte łóżko wystarcza, aby po 10 sekundach nadeszło wspólne rano. Atak, zniszczenie łóżka lub opuszczenie świata kończy odpoczynek. Skrzynia ma oddzielną pokrywę, boki i tył z zawiasami; zamek znajduje się tylko na przedniej ścianie.
 
 Wyprawy prowadzą również do **zamków o podstawie 73 × 73 bloki** i zrujnowanych twierdz. Za murami są wieże, dziedziniec, wielopiętrowy donżon, koszary, zbrojownia i skarbiec. Rycerze patrolują teren, atakują po wejściu w ich zasięg i wracają do obrony zamku po dłuższym pościgu. Pokonani obrońcy pozostają pokonani po zapisaniu świata. W atlasie (**J**) wybierz **Znajdź zamek**, aby otrzymać cel wyprawy; tryb kreatywny pozwala też od razu go odwiedzić. Zamki, obrońcy, łupy i nowe kształty działają w jednym wspólnym świecie multiplayer.
+
+Punkt odrodzenia ustawia **użycie łóżka**, a nie samo jego postawienie. Wyjście z łóżka, odejście, zapis i ponowne dołączenie zachowują ten punkt. Po śmierci wracasz w bezpieczne miejsce przy użytym łóżku; gdy zostało zniszczone lub nie można bezpiecznie obok niego stanąć, wracasz do punktu startowego w Nadziemiu. W multiplayer pozycję zatwierdza serwer, a spóźnione pakiety ruchu nie cofają odrodzenia do miejsca śmierci.
 
 ### Rudy, surowce i zbroje
 

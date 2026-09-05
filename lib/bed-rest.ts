@@ -1,6 +1,7 @@
 import { BLOCKS, type Dimension } from "./blocks";
 import { bedPartner } from "./bed";
-import { SHAPES, CARDINAL, boxList, worldBoxCollision, playerBox, type V3 } from "./block-shapes";
+import { SHAPES, CARDINAL, boxList, worldBoxCollision, type V3 } from "./block-shapes";
+import { isSafeStandingPosition } from "./safe-spawn";
 
 export const BED_REST_SECONDS = 10;
 export const isBedNight = (clock: number) => ((clock % 600) + 600) % 600 > 348;
@@ -104,20 +105,7 @@ export function bedRestPose(rest: BedRest): { p: V3; yaw: number } {
 /** Searches real box support/clearance; never exits into water, lava, a ceiling or another bed. */
 export function bedRestExit(world: RestWorld, rest: BedRest, fallback?: V3): V3 | null {
   const solid = (id: number) => !!BLOCKS[id]?.solid;
-  const valid = (p: V3) => {
-    if (!p.every(Number.isFinite) || p[1] < 1 || p[1] > 73) return false;
-    const a = playerBox({ x: p[0], y: p[1], z: p[2] }, 1.75);
-    if (worldBoxCollision(a, (x, y, z) => world.get(x, y, z), solid)) return false;
-    for (let y = Math.floor(p[1]); y <= Math.floor(p[1] + 1.75); y++)
-      for (let x = Math.floor(a[0]); x <= Math.floor(a[3]); x++)
-        for (let z = Math.floor(a[2]); z <= Math.floor(a[5]); z++)
-          if ([7, 15].includes(world.get(x, y, z))) return false;
-    return worldBoxCollision(
-      playerBox({ x: p[0], y: p[1] - 0.002, z: p[2] }, 0.003),
-      (x, y, z) => world.get(x, y, z),
-      solid,
-    );
-  };
+  const valid = (p: V3) => isSafeStandingPosition(world, p);
   const cells: { x: number; z: number; distance: number }[] = [];
   for (let x = rest.foot[0] - 4; x <= rest.foot[0] + 4; x++)
     for (let z = rest.foot[2] - 4; z <= rest.foot[2] + 4; z++) {

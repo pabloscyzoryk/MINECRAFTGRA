@@ -17,6 +17,9 @@ import {
   type ArmorSource,
 } from "./armor";
 import type { Stack } from "./inventory";
+import { bedRestExit, resolveBedRest } from "./bed-rest";
+import { canonicalBlock, type V3 } from "./block-shapes";
+import { findSafeWorldSpawn } from "./safe-spawn";
 export type AdventureData = {
   furnaces: Record<string, FurnaceState>;
   chestSlots: Record<string, ChestSlots>;
@@ -29,6 +32,7 @@ export type AdventureData = {
   storage: Record<string, Record<number, number>>;
   crops: Record<string, number>;
   spawn: { x: number; y: number; z: number } | null;
+  bedSpawn: V3 | null;
   waypoint: { x: number; z: number; name: string } | null;
   castleDefeated: string[];
 };
@@ -44,6 +48,7 @@ export const newAdventure = (): AdventureData => ({
   storage: {},
   crops: {},
   spawn: null,
+  bedSpawn: null,
   waypoint: null,
   castleDefeated: [],
 });
@@ -368,15 +373,53 @@ export class Adventure {
   }
 
   respawn() {
+    const g = this.game,
+      p = this.data.spawn;
+    let bed = this.data.bedSpawn;
+    // Older saves stored only the safe standing point. Recover its nearby bed once,
+    // rather than keeping a permanent spawn coordinate after that bed is destroyed.
+    if (!bed && p) {
+      g.ensure(p.x, p.z, true);
+      const candidates: { p: V3; distance: number }[] = [];
+      for (let x = Math.floor(p.x) - 4; x <= Math.floor(p.x) + 4; x++)
+        for (let z = Math.floor(p.z) - 4; z <= Math.floor(p.z) + 4; z++)
+          for (let y = Math.max(1, Math.floor(p.y) - 4); y <= Math.floor(p.y) + 3; y++)
+            if (canonicalBlock(g.world.get(x, y, z)) === 62)
+              candidates.push({
+                p: [x, y, z],
+                distance: Math.hypot(x + 0.5 - p.x, y - p.y, z + 0.5 - p.z),
+              });
+      candidates.sort((a, b) => a.distance - b.distance);
+      for (const candidate of candidates) {
+        const rest = resolveBedRest(g.world, ...candidate.p);
+        if (rest) {
+          bed = rest.foot;
+          break;
+        }
+      }
+    }
+    if (bed) {
+      g.ensure(bed[0], bed[2], true);
+      const rest = resolveBedRest(g.world, ...bed);
+      const exit = rest ? bedRestExit(g.world, rest) : null;
+      if (exit) {
+        this.data.bedSpawn = [...rest!.foot];
+        this.data.spawn = { x: exit[0], y: exit[1], z: exit[2] };
+        this.data.equipment = emptyEquipment();
+        this.data.armor = 0;
+        g.position.fromArray(exit);
+        return true;
+      }
+    }
+    this.data.bedSpawn = null;
+    this.data.spawn = null;
+    const exit = findSafeWorldSpawn(g.world);
+    if (!exit) return false;
     this.data.equipment = emptyEquipment();
     this.data.armor = 0;
-    const p = this.data.spawn,
-      g = this.game;
-    if (p) {
-      g.ensure(p.x, p.z, true);
-      g.position.set(p.x, p.y, p.z);
-      if (g.collision(g.position, 1.75)) g.position.y = g.world.surface(p.x, p.z) + 0.05;
-    }
+    g.ensure(exit[0], exit[2], true);
+    g.position.fromArray(exit);
+    return true;
   }
   locate(id: string, teleport = false) {
     const g = this.game,
@@ -479,6 +522,19 @@ export class Adventure {
     this.reset();
     if (!value || typeof value !== "object") return;
     this.data = { ...this.data, ...value };
+    this.data.bedSpawn =
+      Array.isArray(value.bedSpawn) &&
+      value.bedSpawn.length === 3 &&
+      value.bedSpawn.every(Number.isInteger) &&
+      value.bedSpawn[1] >= 1 &&
+      value.bedSpawn[1] <= 72
+        ? [value.bedSpawn[0], value.bedSpawn[1], value.bedSpawn[2]]
+        : null;
+    const spawn = value.spawn;
+    this.data.spawn =
+      spawn && [spawn.x, spawn.y, spawn.z].every(Number.isFinite)
+        ? { x: spawn.x, y: spawn.y, z: spawn.z }
+        : null;
     this.data.equipment = migrateEquipment(
       value.equipment,
       Number(value.armor) || 0,

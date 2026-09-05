@@ -2,6 +2,8 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import "./landing.css";
 import "./bed.css";
+import "./pause.css";
+import PauseDetails from "@/components/pause-details";
 import BedStatus from "@/components/bed-status";
 import GameLanding from "@/components/game-landing";
 import { DRAGON_MAX_HEALTH, DRAGON_ENRAGED_HEALTH } from "@/lib/dragon-balance";
@@ -417,11 +419,7 @@ export default function Home() {
           <div className="damage-layer" style={{ opacity: snap.damage * 0.9 }} />
           <div className="water-layer" style={{ opacity: snap.underwater ? 0.4 : 0 }} />
           <header className="hud-header">
-            <div className="hud-brand">
-              <Box size={21} />
-              <b>BLOCKLAND</b>
-              <span>{DIMENSIONS[snap.dimension].name}</span>
-            </div>
+            {runtime && <NetworkToolbar game={runtime} open={open} />}
             <div className="hud-actions">
               <button
                 title="Atlas i osiągnięcia"
@@ -453,26 +451,8 @@ export default function Home() {
             </div>
           </header>
           <div className="hud-left-stack">
-            {runtime && <NetworkToolbar game={runtime} open={open} />}
-            {snap.difficulty === "horror" && snap.horrorThreat ? (
+            {snap.difficulty === "horror" && snap.horrorThreat && (
               <HorrorStatus threat={snap.horrorThreat} localId={runtime?.net?.id ?? "local"} />
-            ) : (
-              <button className="quest-card" onClick={() => open("journal")}>
-                <span>
-                  <Sparkles size={12} /> DZIENNIK PRZYGODY
-                </span>
-                <p>{snap.objective}</p>
-                <small>
-                  {snap.mode === "creative" ? "KREATYWNY" : "PRZETRWANIE"}{" "}
-                  {snap.flying
-                    ? " · LATANIE"
-                    : snap.crouching
-                      ? " · KUCANIE"
-                      : snap.sprinting
-                        ? " · SPRINT"
-                        : ""}
-                </small>
-              </button>
             )}
           </div>
           {snap.adventure.waypoint && snap.dimension === "overworld" && (
@@ -546,7 +526,6 @@ export default function Home() {
                 <i />
                 <b />
               </div>
-              {snap.target && <div className="target-label">{snap.target}</div>}
             </>
           )}
           {snap.won && (
@@ -640,23 +619,6 @@ export default function Home() {
               ))}
             </div>
           </div>
-          {settings.showHints && (
-            <div className="play-hints">
-              <span>
-                <kbd>LPM</kbd>Kop / atakuj
-              </span>
-              <span>
-                <kbd>PPM</kbd>Postaw / użyj
-              </span>
-              <span>
-                <kbd>{keyName(settings.bindings.inventory)}</kbd>Ekwipunek
-              </span>
-              <span>
-                <kbd>2× {keyName(settings.bindings.forward)}</kbd>Bieg ·{" "}
-                {keyName(settings.bindings.sneak)}: kucanie
-              </span>
-            </div>
-          )}
           <div className="save-indicator">
             <i />
             {runtime?.net ? "Zapis na serwerze" : "Autozapis lokalny"}
@@ -703,7 +665,7 @@ export default function Home() {
                     : panel === "settings" || panel === "media"
                       ? "Dopasuj grę do swojego stylu."
                       : panel === "pause"
-                        ? "Ustawienia i ekwipunek. Na serwerze inni gracze nadal grają."
+                        ? "Twój świat, dziennik i sterowanie. Na serwerze inni gracze nadal grają."
                         : panel === "dimensions"
                           ? "Przekrocz portal i odkryj drugą stronę."
                           : panel === "death"
@@ -719,6 +681,7 @@ export default function Home() {
                 Wróć do gry
                 <ArrowRight size={18} />
               </button>
+              {snap && <PauseDetails snap={snap} settings={settings} open={open} />}
               <div className="pause-grid">
                 <button onClick={() => setPanel("journal")}>
                   <BookOpen />
@@ -742,7 +705,7 @@ export default function Home() {
                 </button>
                 <button onClick={() => setPanel("help")}>
                   <BookOpen />
-                  Jak grać
+                  Sterowanie i pomoc
                 </button>
               </div>
               <div className="save-actions">
@@ -859,14 +822,14 @@ export default function Home() {
                   [keyName(settings.bindings.jump), "Skok / pływanie"],
                   [`2× ${keyName(settings.bindings.forward)}`, "Sprint"],
                   [keyName(settings.bindings.sneak), "Kucanie"],
-                  ["LPM", "Kopanie / atak"],
-                  ["PPM", "Blok / jedzenie / łuk"],
+                  [settings.swapMouse ? "PPM" : "LPM", "Kopanie / atak"],
+                  [settings.swapMouse ? "LPM" : "PPM", "Blok / jedzenie / łuk"],
                   ["1 – 9", "Wybór przedmiotu"],
                   [keyName(settings.bindings.inventory), "Ekwipunek i crafting"],
                   [keyName(settings.bindings.fly), "Latanie w kreatywnym"],
                   [keyName(settings.bindings.journal), "Atlas i osiągnięcia"],
                   [keyName(settings.bindings.drop), "Wyrzuć przedmiot (Ctrl: cały stos)"],
-                  [keyName(settings.bindings.eat), "Zjedz przedmiot"],
+                  [keyName(settings.bindings.eat), "Jedz (przytrzymaj)"],
                   [keyName(settings.bindings.sprint), "Sprint"],
                   [keyName(settings.bindings.perspective), "Widok trzeciej osoby"],
                   [keyName(settings.bindings.dimensions), "Wymiary i portale"],

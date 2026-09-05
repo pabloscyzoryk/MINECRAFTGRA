@@ -101,7 +101,7 @@ test("Room uses active players' real eye rays, including an observer behind a ne
     c.room.populate = () => {};
     c.world.solid = (_x, y) => y < 50;
     c.world.surface = () => 50;
-    c.world.get = () => 0;
+    c.world.get = (_x, y) => (y < 50 ? 3 : 0);
     c.mob.group.position.set(40, 50, 46);
     c.mob.group.rotation.set(0, 0, 0);
     c.mob.speed = 0;
@@ -139,9 +139,9 @@ test("Room never treats a menu player's frozen camera as eye contact", () => {
   const c = source();
   try {
     c.room.populate = () => {};
-    c.world.solid = () => false;
+    c.world.solid = (_x, y) => y < 50;
     c.world.surface = () => 50;
-    c.world.get = () => 0;
+    c.world.get = (_x, y) => (y < 50 ? 3 : 0);
     c.mob.group.position.set(40, 50, 46);
     c.mob.group.rotation.set(0, 0, 0);
     c.mob.speed = 0;

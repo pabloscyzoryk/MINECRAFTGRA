@@ -1,3 +1,23 @@
+.hud-header {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  column-gap: 12px;
+  row-gap: 10px;
+}
+.hud-header .hud-actions {
+  margin-left: auto;
+}
+.hud-header .network-hud {
+  position: static;
+  display: flex;
+  flex-wrap: wrap;
+  flex: 0 1 auto;
+  max-width: 100%;
+  gap: 6px;
+}
+.hud-header .network-hud small {
+  display: inline;
+}
 .hud-left-stack {
   position: absolute;
   top: 82px;
@@ -15,14 +35,8 @@
   width: 100%;
   text-align: left;
 }
-.hud-left-stack .network-hud {
-  position: static;
-  display: flex;
-  flex-wrap: wrap;
-  max-width: 100%;
-  gap: 6px;
-}
 .network-hud button {
+  position: relative;
   flex-shrink: 0;
   min-width: 40px;
   padding: 8px 10px;
@@ -39,6 +53,9 @@
   border-color: #a7d9a2;
 }
 .camera-live-dot {
+  position: absolute;
+  top: 6px;
+  right: 6px;
   width: 5px;
   height: 5px;
   background: #c9eda6;
@@ -278,7 +295,7 @@
 @media (max-width: 900px) {
   .hud-left-stack {
     left: 18px;
-    top: 72px;
+    top: 82px;
     width: 280px;
   }
   .waypoint-hud {
@@ -287,9 +304,13 @@
   }
 }
 @media (max-width: 600px) {
+  .hud-header {
+    padding: 0 !important;
+    row-gap: 8px;
+  }
   .hud-left-stack {
     left: 15px;
-    top: 62px;
+    top: 132px;
     width: min(280px, calc(100vw - 30px));
     gap: 8px;
   }
@@ -299,8 +320,8 @@
   .hud-brand > b {
     display: none;
   }
-  .hud-left-stack .network-hud button {
-    min-height: 38px;
+  .hud-header .network-hud button {
+    min-height: 44px;
   }
   .media-card,
   .media-settings > .voice-settings {
@@ -320,14 +341,19 @@
 @media (pointer: coarse) {
   .hud-left-stack {
     left: max(12px, env(safe-area-inset-left));
-    top: 70px;
+    top: 132px;
     width: min(270px, calc(100vw - 24px));
   }
-  .hud-left-stack .network-hud button {
+  .hud-header .network-hud button {
     min-width: 44px;
     min-height: 44px;
   }
   .hud-brand > b {
     display: block;
+  }
+}
+@media (max-width: 360px) {
+  .hud-header .network-hud small {
+    display: none;
   }
 }

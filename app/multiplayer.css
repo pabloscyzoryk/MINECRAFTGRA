@@ -112,7 +112,7 @@
 }
 .network-hud {
   position: fixed;
-  top: 74px;
+  top: 24px;
   left: 26px;
   display: flex;
   gap: 6px;
@@ -543,7 +543,7 @@
     display: none;
   }
   .network-hud {
-    top: 56px;
+    top: 14px;
     left: 12px;
   }
   .network-hud button {

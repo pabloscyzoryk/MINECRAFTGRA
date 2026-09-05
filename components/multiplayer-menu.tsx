@@ -270,15 +270,6 @@ export function NetworkHUD({ game, open }: { game: Game; open: (p: string) => vo
         </button>
       )}
       <div className="combat-hud">
-        <span>
-          <Shield size={13} />
-          {net.protection > 0
-            ? "Ochrona po odrodzeniu"
-            : game.world.dimension === "overworld" &&
-                Math.hypot(game.position.x - 8, game.position.z - 22) < 12
-              ? "Strefa bezpieczna"
-              : "PvP aktywne"}
-        </span>
         <div title="Wytrzymałość">
           <i style={{ width: net.stamina + "%" }} />
         </div>

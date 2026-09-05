@@ -1,0 +1,116 @@
+.pause-details {
+  border: 1px solid #ffffff20;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0c201c55;
+}
+.pause-details-tabs {
+  display: flex;
+  padding: 5px;
+  gap: 4px;
+  background: #ffffff06;
+  border-bottom: 1px solid #ffffff14;
+}
+.pause-details-tabs button {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #bfceb8;
+}
+.pause-details-tabs button[aria-selected="true"] {
+  background: #cfe4a7;
+  color: #243522;
+}
+.pause-details-tabs svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+.pause-details button:focus-visible,
+.pause-details-content:focus-visible {
+  outline: 2px solid #d4ecac;
+  outline-offset: -3px;
+}
+.pause-details-content {
+  padding: 17px 18px;
+  min-height: 126px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.pause-details-content strong {
+  color: #edf3df;
+  font-size: 15px;
+  font-weight: 600;
+}
+.pause-details-content strong span,
+.pause-details-content p {
+  color: #b8c7b2;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.pause-detail-label {
+  color: #aec394;
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+.pause-inspected b {
+  font-weight: 500;
+  color: #e0e9d8;
+}
+.pause-detail-link {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #d2e7b0;
+}
+.pause-detail-link:hover {
+  text-decoration: underline;
+}
+.pause-detail-link svg {
+  width: 14px;
+  height: 14px;
+}
+.pause-control-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px 15px;
+  font-size: 11px;
+  color: #c8d5bf;
+}
+.pause-control-list span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.pause-control-list kbd {
+  padding: 2px 5px;
+  background: #ffffff10;
+  border: 1px solid #ffffff24;
+  border-radius: 4px;
+  white-space: nowrap;
+  font: inherit;
+  color: #eff4e8;
+}
+@media (max-width: 420px) {
+  .pause-details-tabs button {
+    gap: 5px;
+    padding: 10px 4px;
+    font-size: 11px;
+  }
+  .pause-details-content {
+    padding: 14px;
+  }
+  .pause-control-list {
+    grid-template-columns: 1fr;
+  }
+}

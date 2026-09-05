@@ -10,6 +10,7 @@ import {
   type V3,
 } from "../lib/block-shapes";
 import { placeBed } from "../lib/bed";
+import { findSafeWorldSpawn } from "../lib/safe-spawn";
 import { touchesCactus } from "../lib/cactus-contact";
 import { EAT_DURATION, isFood, type FoodId, type EatingWire } from "../lib/eating";
 import {
@@ -102,6 +103,7 @@ type Player = PlayerWire & {
   bedSpawnPosition?: Vec;
   bedEntry?: Vec;
   bedStartedAt?: number;
+  respawnRevision?: number;
   usingFood?: boolean;
   foodUse?: {
     id: FoodId;
@@ -281,11 +283,18 @@ export class Room {
       });
     let p = this.players.get(id);
     if (!p) {
-      const w = this.ensure("overworld", 8, 22);
+      const spawn = this.worldSpawnPosition();
+      if (!spawn)
+        return this.send(id, {
+          type: "error",
+          fatal: true,
+          message:
+            "Brak bezpiecznego miejsca przy początku świata. Spróbuj ponownie po udrożnieniu okolicy.",
+        });
       p = {
         id,
         nick,
-        p: [8.5, w.surface(8, 22) + 0.05, 22.5],
+        p: spawn,
         yaw: 0.22,
         pitch: 0,
         dimension: "overworld",
@@ -316,8 +325,14 @@ export class Room {
       };
       this.players.set(id, p);
     }
+    if (!this.endBedRest(p, true, false))
+      return this.send(id, {
+        type: "error",
+        fatal: true,
+        message:
+          "Brak bezpiecznego miejsca, aby wstać. Spróbuj ponownie po udrożnieniu okolicy łóżka.",
+      });
     p.nick = nick;
-    this.endBedRest(p, true, false);
     this.cancelEating(p, false);
     p.usingFood = false;
     p.skin = skin;
@@ -332,6 +347,7 @@ export class Room {
     p.profile.difficulty = selectedDifficulty;
     p.active = false;
     p.profile.equipment = { ...p.equipment };
+    this.ensure(p.dimension, p.p[0], p.p[2]);
     this.send(id, {
       type: "welcome",
       id,
@@ -371,12 +387,16 @@ export class Room {
       eating: this.eatingState(p),
     };
   }
-  private standingPosition(p: Player, rest: BedRest): Vec {
+  private worldSpawnPosition(): Vec | null {
+    const world = this.ensure("overworld", 8, 22);
+    const spawn = findSafeWorldSpawn(world);
+    return spawn ? [...spawn] : null;
+  }
+  private standingPosition(p: Player, rest: BedRest): Vec | null {
     const world = this.ensure(rest.dimension, rest.foot[0], rest.foot[2]);
     const exit = bedRestExit(world, rest, p.bedEntry);
     if (exit) return [...exit];
-    const spawn = this.ensure("overworld", 8, 22);
-    return [8.5, spawn.surface(8.5, 22.5) + 0.05, 22.5];
+    return this.worldSpawnPosition();
   }
   private playerEye(p: Player) {
     return p.bedRest
@@ -397,15 +417,19 @@ export class Room {
       revision: p.bedRestRevision ?? 0,
       p: [...p.p],
       yaw: p.yaw,
+      dimension: p.dimension,
       clock: this.clock,
+      food: Number(p.profile.food ?? 20),
     };
   }
   /** Release occupancy immediately; a disconnected profile must never resume lying after reload. */
   endBedRest(p: Player, relocate = true, notify = true) {
     const rest = p.bedRest;
-    if (!rest) return;
+    if (!rest) return true;
     if (relocate) {
-      p.p = this.standingPosition(p, rest);
+      const exit = this.standingPosition(p, rest);
+      if (!exit) return false;
+      p.p = exit;
       p.dimension = rest.dimension;
     }
     p.bedRest = null;
@@ -416,6 +440,7 @@ export class Room {
     p.swingProgress = -1;
     p.grounded = true;
     if (notify) this.send(p.id, this.restPacket(p));
+    return true;
   }
   tickBedRest() {
     for (const p of this.players.values()) {
@@ -546,6 +571,17 @@ export class Room {
     const p = this.players.get(id);
     if (!p) return;
     if (
+      p.respawnRevision &&
+      (!Number.isSafeInteger(m.bedRestRevision) ||
+        Number(m.bedRestRevision) < p.respawnRevision ||
+        Number(m.bedRestRevision) > (p.bedRestRevision ?? 0))
+    ) {
+      // An old gateway or an input sent before the respawn ACK must not undo the teleport.
+      p.seen = this.now();
+      this.send(id, this.restPacket(p));
+      return;
+    }
+    if (
       validVec(m.p) &&
       m.p[1] > -100 &&
       m.p[1] < 200 &&
@@ -634,13 +670,15 @@ export class Room {
     delete p.profile.eating;
     delete p.profile.foodUse;
     delete p.profile.usingFood;
-    if (p.bedSpawnPosition) {
-      const [x, y, z] = p.bedSpawnPosition;
-      p.profile.adventure = {
-        ...(typeof p.profile.adventure === "object" ? p.profile.adventure : {}),
-        spawn: { x, y, z },
-      };
-    }
+    p.profile.adventure = {
+      ...(typeof p.profile.adventure === "object" ? p.profile.adventure : {}),
+      bedSpawn: p.bedSpawn ? [...p.bedSpawn] : null,
+      ...(p.bedSpawnPosition
+        ? {
+            spawn: { x: p.bedSpawnPosition[0], y: p.bedSpawnPosition[1], z: p.bedSpawnPosition[2] },
+          }
+        : {}),
+    };
   }
   owns(p: Player, id: number, n = 1) {
     return (
@@ -666,7 +704,8 @@ export class Room {
     if (["mine", "use", "hit", "huntHit", "pvp", "shoot", "drop", "respawn"].includes(c.type))
       this.cancelEating(p);
     if (c.type === "restEnd") {
-      this.endBedRest(p);
+      if (!this.endBedRest(p))
+        return reject("Brak bezpiecznego miejsca obok łóżka lub początku świata.");
       return this.reply(p, c, {
         ok: true,
         bedRest: null,
@@ -691,6 +730,19 @@ export class Room {
     }
     if (c.type === "respawn") {
       if (p.health > 0) return reject("Postać jeszcze żyje.");
+      let at: Vec | null = null;
+      if (p.bedSpawn) {
+        const world = this.ensure("overworld", p.bedSpawn[0], p.bedSpawn[2]);
+        const rest = resolveBedRest(world, ...p.bedSpawn);
+        const exit = rest ? bedRestExit(world, rest, p.bedSpawnPosition) : null;
+        at = exit ? [...exit] : null;
+      }
+      const bedAvailable = !!at;
+      at ??= this.worldSpawnPosition();
+      if (!at)
+        return reject(
+          "Brak bezpiecznego miejsca odrodzenia. Spróbuj ponownie po udrożnieniu okolicy początku świata.",
+        );
       this.endBedRest(p, false);
       p.health = 20;
       p.stamina = 100;
@@ -706,18 +758,29 @@ export class Room {
       this.horrorHunt.reset(id);
       this.broadcastHunts();
       this.send(id, { type: "horrorReset" });
-      if (p.bedSpawn) {
-        const world = this.ensure("overworld", p.bedSpawn[0], p.bedSpawn[2]);
-        const rest = resolveBedRest(world, ...p.bedSpawn);
-        const at = rest ? bedRestExit(world, rest, p.bedSpawnPosition) : null;
-        const fallback = this.ensure("overworld", 8, 22);
-        p.p = at ? [...at] : [8.5, fallback.surface(8.5, 22.5) + 0.05, 22.5];
-        p.dimension = "overworld";
-      }
+      if (bedAvailable) p.bedSpawnPosition = [...at];
+      else p.bedSpawn = p.bedSpawnPosition = undefined;
+      p.p = [...at];
+      p.dimension = "overworld";
+      p.moving = p.sprinting = p.crouch = p.swing = p.blocking = p.usingFood = false;
+      p.swingProgress = -1;
+      p.grounded = true;
+      p.active = false;
+      const spawn = { x: at[0], y: at[1], z: at[2] };
+      p.profile.adventure = {
+        ...(typeof p.profile.adventure === "object" ? p.profile.adventure : {}),
+        spawn,
+        bedSpawn: p.bedSpawn ? [...p.bedSpawn] : null,
+      };
       p.bedRestRevision = (p.bedRestRevision ?? 0) + 1;
+      p.respawnRevision = p.bedRestRevision;
       return this.reply(p, c, {
         ok: true,
         health: 20,
+        food: 20,
+        dimension: p.dimension,
+        spawn,
+        bedSpawn: p.bedSpawn ? [...p.bedSpawn] : null,
         bedRest: null,
         bedRestRevision: p.bedRestRevision,
         p: [...p.p],
@@ -1283,6 +1346,7 @@ export class Room {
         p.profile.adventure = {
           ...(typeof p.profile.adventure === "object" ? p.profile.adventure : {}),
           spawn,
+          bedSpawn: [...rest.foot],
         };
         this.send(p.id, this.restPacket(p));
         return this.reply(p, c, {
@@ -1292,6 +1356,7 @@ export class Room {
           p: [...p.p],
           yaw: p.yaw,
           spawn,
+          bedSpawn: [...rest.foot],
           clock: this.clock,
         });
       }
@@ -2265,7 +2330,7 @@ export class Room {
         bedStartedAt: undefined,
         ...(p.bedRest
           ? {
-              p: this.standingPosition(p, p.bedRest),
+              p: this.standingPosition(p, p.bedRest) ?? p.p,
               bedRest: null,
               bedRestRevision: (p.bedRestRevision ?? 0) + 1,
               bedEntry: undefined,
@@ -2370,6 +2435,17 @@ export class Room {
             bedRestRevision: (Number(p.bedRestRevision) || 0) + (p.bedRest ? 1 : 0),
             bedEntry: undefined,
             bedStartedAt: undefined,
+            bedSpawn:
+              validVec(p.bedSpawn) && p.bedSpawn.every(Number.isInteger)
+                ? ([...p.bedSpawn] as Vec)
+                : undefined,
+            bedSpawnPosition: validVec(p.bedSpawnPosition)
+              ? ([...p.bedSpawnPosition] as Vec)
+              : undefined,
+            respawnRevision:
+              Number.isSafeInteger(p.respawnRevision) && Number(p.respawnRevision) > 0
+                ? Math.min(Number(p.respawnRevision), Number(p.bedRestRevision) || 0)
+                : undefined,
             foodUse: undefined,
             usingFood: false,
             eating: null,

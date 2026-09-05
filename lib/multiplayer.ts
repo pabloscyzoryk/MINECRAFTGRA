@@ -3,6 +3,7 @@ import { canonicalBlock } from "./block-shapes";
 import type { BedRest } from "./bed-rest";
 import { EAT_DURATION, eatingBite, validEatingWire } from "./eating";
 import type { Game } from "./engine";
+import type { Dimension } from "./blocks";
 import { Mob, cube, mat } from "./entities";
 import { SkinModel, readSkin, defaultSkin } from "./skin-model";
 import { PROTOCOL, type PlayerWire, type SkinWire, type FrameWire, type Vec } from "./net-protocol";
@@ -223,6 +224,7 @@ export class Multiplayer {
         "environmentDamage",
         "restEnd",
         "eatCancel",
+        "respawn",
       ].includes(String(command.type))
     )
       return "";
@@ -247,7 +249,7 @@ export class Multiplayer {
       return;
     }
     if (data.type === "bedRest") {
-      this.applyBedRest(data.state, data.revision, data.p, data.yaw, data.clock);
+      this.applyBedRest(data.state, data.revision, data.p, data.yaw, data.clock, data.dimension);
       return;
     }
     if (data.type === "horrorReset") {
@@ -417,6 +419,7 @@ export class Multiplayer {
           data.player.p,
           data.player.yaw,
           data.clock,
+          data.player.dimension,
         );
       this.sendInput();
       this.sendFaceFrame(g.faceCamera?.latestFrame ?? null);
@@ -458,7 +461,14 @@ export class Multiplayer {
       this.players = data.players;
       const owner = this.players.find((player) => player.id === this.id);
       if (owner)
-        this.applyBedRest(owner.bedRest ?? null, owner.bedRestRevision ?? 0, owner.p, owner.yaw);
+        this.applyBedRest(
+          owner.bedRest ?? null,
+          owner.bedRestRevision ?? 0,
+          owner.p,
+          owner.yaw,
+          undefined,
+          owner.dimension,
+        );
       this.stamina = data.combat?.[this.id]?.stamina ?? this.stamina;
       this.protection = data.combat?.[this.id]?.protection ?? 0;
       for (const [dimension, x, y, z, id, level] of data.changes) {
@@ -509,7 +519,14 @@ export class Multiplayer {
         g.adventure.data.armor = g.adventure.data.equipment.chest;
       }
       if (Object.hasOwn(data, "bedRest"))
-        this.applyBedRest(data.bedRest, data.bedRestRevision, data.p, data.yaw, data.clock);
+        this.applyBedRest(
+          data.bedRest,
+          data.bedRestRevision,
+          data.p,
+          data.yaw,
+          data.clock,
+          data.dimension,
+        );
       if (data.ok) {
         if (!data.pack && currentPack) {
           for (const [id, n] of data.cost ?? [])
@@ -521,7 +538,7 @@ export class Multiplayer {
         if (data.xp) g.xp += data.xp;
         if (data.mined) g.mined++;
         if (data.placed) g.placed++;
-        if (typeof data.health === "number") g.health = data.health;
+        if (currentPack && typeof data.health === "number") g.health = data.health;
         if (data.message) g.notify(data.message);
         if (
           data.spawn &&
@@ -530,6 +547,13 @@ export class Multiplayer {
           [data.spawn.x, data.spawn.y, data.spawn.z].every(Number.isFinite)
         )
           g.adventure.data.spawn = { x: data.spawn.x, y: data.spawn.y, z: data.spawn.z };
+        if (Number(data.bedRestRevision) >= this.bedRestRevision && Object.hasOwn(data, "bedSpawn"))
+          g.adventure.data.bedSpawn =
+            Array.isArray(data.bedSpawn) &&
+            data.bedSpawn.length === 3 &&
+            data.bedSpawn.every(Number.isInteger)
+              ? [data.bedSpawn[0], data.bedSpawn[1], data.bedSpawn[2]]
+              : null;
         g.emit();
       } else if (data.message) g.notify(data.message);
       if (data.chest) {
@@ -695,6 +719,7 @@ export class Multiplayer {
     position?: Readonly<Vec>,
     yaw?: number,
     clock?: number,
+    dimension?: Dimension,
   ) {
     const g = this.game;
     if (
@@ -724,6 +749,18 @@ export class Multiplayer {
       Array.isArray(position) && position.length === 3 && position.every(Number.isFinite)
         ? position
         : undefined;
+    if (
+      validPosition &&
+      dimension &&
+      ["overworld", "nether", "end"].includes(dimension) &&
+      dimension !== g.world.dimension
+    ) {
+      g.clearDynamic();
+      g.world.switch(dimension);
+      g.dimensionChanged();
+      g.ensure(validPosition[0], validPosition[2], true);
+      if (dimension === "end") g.spawnDragon();
+    }
     g.applyRestState(state ? structuredClone(state) : null, validPosition);
     if (Number.isFinite(yaw)) g.yaw = yaw!;
     g.emit();
@@ -733,6 +770,23 @@ export class Multiplayer {
     if (!this.game.rest || [...this.pending.values()].some((p) => p.command.type === "restEnd"))
       return "";
     return this.request({ type: "restEnd" });
+  }
+  respawn() {
+    const g = this.game;
+    if (g.health > 0 || [...this.pending.values()].some((p) => p.command.type === "respawn"))
+      return "";
+    return this.request({ type: "respawn" }, (data) => {
+      if (
+        this.closed ||
+        g.net !== this ||
+        !data.ok ||
+        g.health <= 0 ||
+        Number(data.inventoryRevision) < this.inventoryRevision ||
+        Number(data.bedRestRevision) < this.bedRestRevision
+      )
+        return;
+      g.finishRespawn();
+    });
   }
   sendInput() {
     const g = this.game;
@@ -744,6 +798,7 @@ export class Multiplayer {
       sprinting: active && g.sprinting,
       furnaceKey: g.pauseReason === "furnace" ? g.adventure.currentFurnace : null,
       p: g.position.toArray(),
+      bedRestRevision: this.bedRestRevision,
       yaw: g.yaw,
       pitch: g.pitch,
       dimension: g.world.dimension,

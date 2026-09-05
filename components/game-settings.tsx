@@ -366,7 +366,6 @@ export default function GameSettingsPanel({
         <div className="settings-scroll settings-content">
           {toggle("minimap", "Minimapa")}
           {toggle("showFPS", "Licznik klatek na sekundę")}
-          {toggle("showHints", "Podpowiedzi sterowania")}
           <p className="panel-footnote">Ustawienia są zapisywane na tym urządzeniu.</p>
           <button
             className="quiet-action"

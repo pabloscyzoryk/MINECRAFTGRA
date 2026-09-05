@@ -9,7 +9,7 @@ function flat(room: Room, mob: Mob) {
   const world = room.region("overworld").world;
   world.solid = (_x, y) => y < 50;
   world.surface = () => 50;
-  world.get = () => 0;
+  world.get = (_x, y) => (y < 50 ? 3 : 0);
   mob.group.position.set(40, 50, 46);
   mob.group.rotation.set(0, 0, 0);
   mob.heading = Math.PI;
