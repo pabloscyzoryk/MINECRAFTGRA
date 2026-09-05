@@ -70,30 +70,61 @@ export class HeldItemModel {
       block.rotation.y = Math.PI / 8;
       block.castShadow = true;
       this.group.add(block);
-    } else if ([104, 108].includes(id)) {
+    } else if ([104, 108, 156].includes(id)) {
       box(0, 0, 0, 0.07, 0.24, 0.07, "#775334");
       box(0, -0.13, 0, 0.1, 0.06, 0.09, "#516a69");
       box(0, 0.14, 0, 0.28, 0.07, 0.09, "#648f87");
       box(0, 0.43, 0, 0.1, 0.53, 0.045, color);
       box(0.015, 0.43, 0.027, 0.025, 0.5, 0.012, "#e5f4ec");
       box(0, 0.715, 0, 0.055, 0.055, 0.045, color);
-    } else if ([101, 102, 103, 118, 127, 128, 130].includes(id)) {
+    } else if (
+      [101, 102, 103, 118, 127, 128, 130, 131, 155, 157, 158, 159, 160, 161, 162].includes(id)
+    ) {
       box(0, 0.17, 0, 0.065, 0.61, 0.065, "#9e7546");
       box(0.02, 0.16, 0.015, 0.017, 0.58, 0.036, "#c19a65");
-      if ([101, 102, 103].includes(id)) {
+      if ([101, 102, 103, 131, 155].includes(id)) {
         box(0, 0.45, 0, 0.38, 0.085, 0.075, color);
         box(-0.21, 0.398, 0, 0.08, 0.16, 0.075, color, -0.45);
         box(0.21, 0.398, 0, 0.08, 0.16, 0.075, color, 0.45);
-      } else if ([127, 128].includes(id)) {
+      } else if ([127, 128, 157, 160].includes(id)) {
         box(-0.1, 0.4, 0, 0.27, 0.23, 0.07, color);
-        box(-0.255, 0.395, 0, 0.04, 0.26, 0.045, id === 127 ? "#e1edeb" : "#dbb579");
-      } else if (id === 130) {
+        box(-0.255, 0.395, 0, 0.04, 0.26, 0.045, id === 128 ? "#dbb579" : id === 157 ? "#fff0a2" : id === 160 ? "#baffee" : "#e1edeb");
+      } else if ([130, 158, 161].includes(id)) {
         box(0, 0.48, 0, 0.19, 0.23, 0.06, color);
         box(0, 0.62, 0, 0.12, 0.05, 0.055, color);
       } else {
         box(-0.085, 0.44, 0, 0.27, 0.075, 0.075, color);
         box(-0.19, 0.385, 0, 0.055, 0.16, 0.07, color);
       }
+    } else if (id === 132) {
+      // Two open handle loops and opposed steel blades remain legible from either camera side.
+      for (const side of [-1, 1]) {
+        const handle = new THREE.Mesh(
+          new THREE.TorusGeometry(0.075, 0.022, 6, 12),
+          material("#805044"),
+        );
+        handle.name = "shears-handle-" + side;
+        handle.position.set(side * 0.095, -0.025, 0);
+        handle.scale.y = 1.18;
+        handle.castShadow = true;
+        this.group.add(handle);
+        box(side * 0.055, 0.075, side * 0.012, 0.035, 0.15, 0.035, "#9aa9ad", -side * 0.48);
+        const blade = new THREE.Shape();
+        blade.moveTo(side * 0.015, 0.1);
+        blade.lineTo(side * 0.24, 0.45);
+        blade.lineTo(side * 0.175, 0.17);
+        blade.lineTo(side * 0.065, 0.085);
+        blade.closePath();
+        const steel = new THREE.Mesh(
+          new THREE.ExtrudeGeometry(blade, { depth: 0.022, bevelEnabled: false }),
+          material(side > 0 ? "#d7e0df" : "#a1afb3"),
+        );
+        steel.name = "shears-blade-" + side;
+        steel.position.z = side * 0.014 - 0.011;
+        steel.castShadow = true;
+        this.group.add(steel);
+      }
+      box(0, 0.115, 0.025, 0.047, 0.047, 0.052, "#5c6b70");
     } else if (id === 129) {
       box(0, 0.27, 0, 0.055, 0.98, 0.055, "#9e7546");
       const tip = new THREE.Mesh(new THREE.ConeGeometry(0.095, 0.24, 4), material(color));

@@ -32,6 +32,7 @@ const { World } = require("../.test-build/world"),
   { faceRect, PARTS } = require("../.test-build/skin-model"),
   THREE = require("three");
 let passed = 0;
+globalThis.window = { matchMedia: () => ({ matches: false }) };
 function test(name, fn) {
   fn();
   console.log("PASS " + name);
@@ -641,11 +642,11 @@ test("F5 cycles first person, third person behind, third person in front, first 
   assert(g.camera.position.z < g.position.z);
   assert(g.camera.getWorldDirection(new THREE.Vector3()).z > 0);
 });
-test("Nether ruins are distant, inactive, and require both repair and ignition", () => {
+test("Nether ruins are near spawn, inactive, and require both repair and ignition", () => {
   const { ignitePortal } = require("../.test-build/portals"),
     w = new World();
   const r = w.ruinLocation();
-  assert(Math.hypot(r.x, r.z) >= 200);
+  assert(Math.hypot(r.x - 8.5, r.z - 22.5) < 32);
   for (let cx = Math.floor((r.x - 12) / 16); cx <= Math.floor((r.x + 12) / 16); cx++)
     for (let cz = Math.floor((r.z - 12) / 16); cz <= Math.floor((r.z + 12) / 16); cz++)
       w.chunk(cx, cz);

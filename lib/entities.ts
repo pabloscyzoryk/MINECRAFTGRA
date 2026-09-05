@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { World } from "./world";
+import { DRAGON_MAX_HEALTH, DRAGON_ENRAGED_HEALTH } from "./dragon-balance";
 export type MobKind =
   | "sheep"
   | "pig"
@@ -551,7 +552,8 @@ export class Dragon {
   jaw: THREE.Mesh | null = null;
   radius = 27;
   deathTime = 0;
-  hp = 300;
+  hp = DRAGON_MAX_HEALTH;
+  orbit = 0;
   time = 0;
   shot = 0;
   dead = false;
@@ -631,7 +633,12 @@ export class Dragon {
     g.add(this.neck);
     this.group.position.set(27, 33, 0);
   }
-  update(dt: number, crystals: number, player: THREE.Vector3, shoot: (p: THREE.Vector3) => void) {
+  update(
+    dt: number,
+    crystals: number,
+    player: THREE.Vector3,
+    shoot: (p: THREE.Vector3, power?: number, speed?: number, aim?: THREE.Vector3) => void,
+  ) {
     if (this.dead) {
       this.deathTime += dt;
       this.group.position.y -= dt * (2 + this.deathTime * 2);
@@ -644,21 +651,24 @@ export class Dragon {
     this.time += dt;
     this.shot -= dt;
     const t = this.time,
-      phase = t % 24;
-    this.hp = Math.min(300, this.hp + crystals * 0.12 * dt);
-    const swoop = phase > 17;
+      enraged = this.hp <= DRAGON_ENRAGED_HEALTH,
+      phase = t % (enraged ? 17 : 21),
+      angularSpeed = enraged ? 0.3 : 0.26;
+    this.orbit += dt * angularSpeed;
+    this.hp = Math.min(DRAGON_MAX_HEALTH, this.hp + Math.max(0, Math.min(8, crystals)) * 0.4 * dt);
+    const swoop = phase > (enraged ? 10 : 14);
     this.radius = THREE.MathUtils.lerp(this.radius, swoop ? 12 : 27, 1 - Math.exp(-dt * 1.4));
     const radius = this.radius;
     this.group.position.set(
-      Math.cos(t * 0.22) * radius,
+      Math.cos(this.orbit) * radius,
       THREE.MathUtils.lerp(
         this.group.position.y,
         swoop ? 23 : 33 + Math.sin(t * 0.5) * 4,
         1 - Math.exp(-dt * 1.7),
       ),
-      Math.sin(t * 0.22) * radius,
+      Math.sin(this.orbit) * radius,
     );
-    this.group.rotation.y = -t * 0.22;
+    this.group.rotation.y = -this.orbit;
     this.group.rotation.z = -0.13 + Math.sin(t * 0.55) * 0.09;
     this.group.rotation.x = swoop ? 0.08 + Math.sin(t) * 0.06 : Math.sin(t * 0.8) * 0.04;
     this.neck.rotation.x = Math.sin(t * 1.8) * 0.08 + (swoop ? 0.12 : 0);
@@ -678,8 +688,22 @@ export class Dragon {
       p.rotation.x = Math.sin(t * 1.3 - i * 0.3) * 0.07;
     });
     if (this.shot < 0 && this.group.position.distanceTo(player) < 70) {
-      shoot(this.group.position.clone());
-      this.shot = crystals ? 3.3 : 1.9;
+      const origin = this.group.localToWorld(new THREE.Vector3(0, 0, -6));
+      const target = player.clone().add(new THREE.Vector3(0, 1, 0));
+      const side = target
+        .clone()
+        .sub(origin)
+        .cross(new THREE.Vector3(0, 1, 0))
+        .normalize();
+      // A visible spread punishes standing still while leaving gaps for a sideways dodge.
+      for (const offset of enraged ? [-2.8, 0, 2.8] : [0, Math.sin(t) > 0 ? 2.8 : -2.8])
+        shoot(
+          origin.clone(),
+          enraged ? 7 : 6,
+          enraged ? 17 : 15,
+          target.clone().addScaledVector(side, offset),
+        );
+      this.shot = enraged ? 1.45 : crystals ? 2.6 : 1.9;
     }
   }
 }

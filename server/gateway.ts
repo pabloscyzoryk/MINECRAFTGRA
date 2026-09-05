@@ -11,6 +11,9 @@ import {
   validSkin,
   validToken,
   validVoice,
+  validFaceFrame,
+  FACE_FRAME_INTERVAL,
+  FACE_ROOM_FRAME_BUDGET,
   type Command,
 } from "../lib/net-protocol";
 export type Store = {
@@ -76,6 +79,8 @@ type Peer = {
   bytes: number;
   reset: number;
   voice: number;
+  face: number;
+  faceActive: boolean;
   joined: boolean;
 };
 export class Gateway {
@@ -97,6 +102,9 @@ export class Gateway {
   incoming: string;
   lease: string;
   snapshot: string;
+  cameraPlayers = 1;
+  cameraPublishing = false;
+  cameraForwarding = false;
   constructor(
     public options: { store?: Store; local?: boolean; namespace?: string; file?: string } = {},
   ) {
@@ -208,8 +216,20 @@ export class Gateway {
   }
   broadcast(packet: Packet) {
     const publish = () => {
-      if (this.store) void this.store.publish(this.out, encodeRedis(packet)).catch(() => {});
-      else this.route(packet);
+      const camera =
+        packet.type === "delivery" &&
+        packet.data?.type === "faceFrame" &&
+        packet.data.frame !== null;
+      if (camera && this.cameraPublishing) return;
+      if (this.store) {
+        if (camera) this.cameraPublishing = true;
+        void this.store
+          .publish(this.out, encodeRedis(packet))
+          .catch(() => {})
+          .finally(() => {
+            if (camera) this.cameraPublishing = false;
+          });
+      } else this.route(packet);
     };
     if (
       packet.type === "delivery" &&
@@ -226,6 +246,8 @@ export class Gateway {
     } else publish();
   }
   route(packet: Packet) {
+    if (packet.type === "delivery" && packet.data?.type === "frame")
+      this.cameraPlayers = Math.max(1, Math.min(16, packet.data.players?.length ?? 1));
     if (packet.type === "connection") {
       for (const p of this.peers.values())
         if (p.id === packet.id && p.connection !== packet.connection) {
@@ -244,6 +266,17 @@ export class Gateway {
           this.send(p.socket, { type: "voice", ...packet.data });
         else if (packet.type === "delivery") {
           let data = packet.data;
+          if (data.type === "faceFrame") {
+            if (data.sender === p.id) continue;
+            if (
+              data.viewers?.includes(p.id) &&
+              (data.frame === null || (p.socket.bufferedAmount ?? 0) <= 64000)
+            )
+              this.send(p.socket, { type: "faceFrame", sender: data.sender, frame: data.frame });
+            else if (data.cleared?.includes(p.id))
+              this.send(p.socket, { type: "faceFrame", sender: data.sender, frame: null });
+            continue;
+          }
           if (data.type === "frame") {
             const self = data.players.find((q: any) => q.id === p.id),
               dimension = self?.dimension ?? "overworld";
@@ -262,7 +295,17 @@ export class Gateway {
   forward(packet: Packet) {
     if (this.closed) return;
     if (!this.store || (this.room && Date.now() < this.leaseUntil)) this.handle(packet);
-    else void this.store.publish(this.incoming, encodeRedis(packet)).catch(() => {});
+    else {
+      const camera = packet.type === "faceFrame" && packet.data !== null;
+      if (camera && this.cameraForwarding) return;
+      if (camera) this.cameraForwarding = true;
+      void this.store
+        .publish(this.incoming, encodeRedis(packet))
+        .catch(() => {})
+        .finally(() => {
+          if (camera) this.cameraForwarding = false;
+        });
+    }
   }
   handle(packet: Packet) {
     const room = this.room;
@@ -286,10 +329,14 @@ export class Gateway {
             });
       }
     } else if (packet.type === "input") room.input(id, data);
+    else if (packet.type === "faceFrame") room.faceFrame(id, data);
     else if (packet.type === "command") room.command(id, data as Command);
     else if (packet.type === "profile") room.profile(id, data);
     else if (packet.type === "chat") room.chatMessage(id, data);
     else if (packet.type === "leave") {
+      room.clearFace(id);
+      room.horrorHunt.reset(id);
+      room.broadcastHunts();
       const p = room.players.get(id);
       if (p) p.seen = 0;
     }
@@ -326,6 +373,8 @@ export class Gateway {
       bytes: 0,
       reset: Date.now(),
       voice: 0,
+      face: 0,
+      faceActive: false,
       joined: false,
     };
     this.peers.set(ws, peer);
@@ -348,7 +397,7 @@ export class Gateway {
           : Array.isArray(raw)
             ? raw.reduce((n, b) => n + b.length, 0)
             : raw.length;
-      if (peer.count > 65 || peer.bytes > 220000) return ws.close(1008, "Rate limit");
+      if (peer.count > 65 || peer.bytes > 1800000) return ws.close(1008, "Rate limit");
       let m: any;
       try {
         m = JSON.parse(raw.toString());
@@ -358,12 +407,15 @@ export class Gateway {
       if (!m || typeof m !== "object") return;
       if (m.type === "ping") return this.send(ws, { type: "pong", time: m.time });
       if (m.type === "join") {
-        if (
-          m.protocol !== PROTOCOL ||
-          !validToken(m.token) ||
-          !validNick(m.nick) ||
-          !validSkin(m.skin)
-        ) {
+        if (m.protocol !== PROTOCOL) {
+          this.send(ws, {
+            type: "error",
+            fatal: true,
+            message: "Ta wersja gry jest nieaktualna. Odśwież stronę lub pobierz nowe GRA.html.",
+          });
+          return ws.close(1008);
+        }
+        if (!validToken(m.token) || !validNick(m.nick) || !validSkin(m.skin)) {
           this.send(ws, {
             type: "error",
             fatal: true,
@@ -386,6 +438,21 @@ export class Gateway {
         return;
       }
       if (!peer.joined) return;
+      if (m.type === "faceFrame") {
+        const interval = Math.max(
+          FACE_FRAME_INTERVAL * 1000,
+          (this.cameraPlayers * 1000) / FACE_ROOM_FRAME_BUDGET,
+        );
+        if (
+          validFaceFrame(m.frame) &&
+          (m.frame === null ? peer.faceActive : now - peer.face + 1 >= interval)
+        ) {
+          peer.faceActive = m.frame !== null;
+          if (peer.faceActive) peer.face = now;
+          this.forward({ type: "faceFrame", id: peer.id, data: m.frame });
+        }
+        return;
+      }
       if (m.type === "voice") {
         if (validVoice(m.audio) && now - peer.voice >= 70) {
           peer.voice = now;
@@ -439,7 +506,7 @@ export function createGameServer(options: ConstructorParameters<typeof Gateway>[
   });
   const wss = new WebSocketServer({
     noServer: true,
-    maxPayload: 150000,
+    maxPayload: 450000,
     perMessageDeflate: { threshold: 1024 },
   });
   server.on("upgrade", (req, socket, head) => {

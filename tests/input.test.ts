@@ -198,6 +198,9 @@ test("Voice has hold, toggle and always modes; typing and blur never leave hold 
       () => true,
       () => {},
     );
+    assert.equal(v.mode, "always");
+    v.set({ mode: "hold" });
+    v.context = { state: "running", close: async () => {} } as unknown as AudioContext;
     v.enabled = true;
     const event = {
       code: "KeyV",

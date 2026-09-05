@@ -819,10 +819,14 @@ export default function SkinEditor() {
     </div>
   );
 }
-export function InventoryAvatar({ heldId = 0 }: { heldId?: number }) {
+export function InventoryAvatar({ heldId = 0, faceTexture = null, equipment = null }: { heldId?: number; faceTexture?: THREE.Texture | null; equipment?: import("@/lib/armor").Equipment | null }) {
   const ref = useRef<HTMLDivElement>(null);
   const held = useRef(heldId);
   held.current = heldId;
+  const face = useRef(faceTexture);
+  face.current = faceTexture;
+  const worn = useRef(equipment);
+  worn.current = equipment;
   useEffect(() => {
     let stopped = false,
       renderer: THREE.WebGLRenderer,
@@ -863,6 +867,8 @@ export function InventoryAvatar({ heldId = 0 }: { heldId?: number }) {
         avatar.group.rotation.y = target.x * 0.25;
         avatar.pose(performance.now() / 1000);
         avatar.setHeldItem(held.current);
+        avatar.setFaceTexture(face.current);
+        avatar.setEquipment(worn.current);
         renderer.render(scene, camera);
       };
       frame();

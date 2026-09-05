@@ -62,7 +62,7 @@ Sprawdź po kolei:
 2. Otworzenie `/api/game` pod adresem wdrożenia zwraca JSON. Pole `configured: true` oznacza obecność konfiguracji; samo w sobie nie potwierdza poprawnego połączenia z Redis.
 3. Dwóch graczy w różnych przeglądarkach dołącza do tego samego świata i widzi swoje nicki.
 4. Blok postawiony przez jedną osobę widzi druga, a zmiana wspólnej skrzyni jest synchronizowana.
-5. Działa czat; po ręcznym włączeniu mikrofonów i udzieleniu zgód można sprawdzić rozmowę.
+5. Działa czat; po wejściu do menu multiplayer przeglądarka prosi o mikrofon, a po udzieleniu zgód i dołączeniu do serwera można sprawdzić rozmowę.
 
 Przy sprawdzaniu nowej wersji wybierz na jednej postaci **Średni**, a na drugiej dobrowolnie **Horror**. Obie powinny pozostać w jednym świecie, a efekty Gościa mają trafiać wyłącznie do postaci Horror. Nie oceniaj działania po samych pierwszych sekundach — spotkania pojawiają się stopniowo. Osobno sprawdź zmianę trudności w trakcie gry i przełącznik nagłych straszeń.
 
@@ -81,7 +81,9 @@ Mikrofon wymaga HTTPS albo localhost. Ustawienie „zawsze włączony” nie omi
 | Łączny transfer miesięczny | 5 GB |
 | Jednoczesne połączenia do bazy | 30 |
 
-Są to limity [planu Redis Cloud Essentials Free](https://redis.io/docs/latest/operate/rc/subscriptions/view-essentials-subscription/essentials-plan-details/), sprawdzone we wrześniu 2026 r. Ruch głosowy, synchronizacja i rozbudowa świata korzystają z tych zasobów. Połączenia do Redis należą do instancji serwera — nie należy utożsamiać limitu 30 połączeń z liczbą graczy.
+Są to limity [planu Redis Cloud Essentials Free](https://redis.io/docs/latest/operate/rc/subscriptions/view-essentials-subscription/essentials-plan-details/), sprawdzone we wrześniu 2026 r. Ruch głosowy, kamerki, synchronizacja i rozbudowa świata korzystają z tych zasobów. Połączenia do Redis należą do instancji serwera — nie należy utożsamiać limitu 30 połączeń z liczbą graczy.
+
+Kamerka ma lokalny obraz HD do 30 klatek/s, a przesyłanie JPEG online do 3 klatek/s, z niższym limitem przy wielu graczach. Serwer wysyła obraz tylko do pobliskich postaci w tym samym wymiarze i pomija klatki przy przeciążonym łączu. Klatki przechodzą przez chwilowe komunikaty Pub/Sub; nie są częścią zapisu Redis. Obraz HD zużywa jednak znacznie więcej miesięcznego transferu niż sama gra — wyłączenie kamerki zatrzymuje ten ruch. Aktualizacja nie zmienia bazy, planu usług ani limitów rozliczeń.
 
 Hobby jest przeznaczony do osobistego użytku niekomercyjnego i ma własne limity zużycia. Kontroluj zakładki **Usage** w Vercelu oraz metryki Redis. Przekroczenie limitów może ograniczyć działanie gry; nie ma obietnicy nieograniczonego bezpłatnego hostingu. Sprawdź aktualne [zasady Hobby](https://vercel.com/docs/plans/hobby) i [limity funkcji](https://vercel.com/docs/functions/limitations).
 
@@ -115,6 +117,8 @@ Do testowania aktualizacji Preview używaj innego namespace lub osobnej bazy. Pr
 | Drugi gracz dostaje inny świat | Ten sam adres wdrożenia, ta sama baza i `WORLD_NAMESPACE` |
 | Utracony profil po powrocie | Ta sama przeglądarka i jej dane strony; nick sam nie przywraca anonimowego klucza |
 | Brak mikrofonu lub dźwięku | HTTPS, zgody witryny, włączony mikrofon, tryb nadawania, głośność i aktywna karta |
+| Mikrofon nie pyta o zgodę ponownie | Przeglądarka może pamiętać wcześniejszą zgodę lub odmowę; sprawdź uprawnienia mikrofonu dla strony |
+| Nie widać twarzy z kamerki | Ustawienia → Mikrofon i kamera, zgoda na kamerę i wybrane urządzenie; użyj przedniego F5. Online wymagany ten sam wymiar i odległość do 60 bloków |
 | Znajomy widzi Gościa, a ja nie | To oczekiwane, jeśli tylko znajomy wybrał Horror; trudność jest ustawiana dla każdej postaci |
 | Brak nagłych straszeń w Horror | Opcja `horrorJumpscares`, aktywna rozgrywka i stopniowy rozwój spotkań; dźwięki mają osobne `horrorVolume` |
 | Powolne działanie lub zerwane sesje | Metryki pamięci, transferu i operacji Redis; limity Vercela; jakość połączenia |

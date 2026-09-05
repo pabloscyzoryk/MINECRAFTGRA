@@ -201,7 +201,7 @@ test("Mobs and dragon use a single shared simulation", () => {
   b.p = [5, 20, 39];
   r.tick(0.05);
   assert(r.dragon.time > 0);
-  r.hitDragon(300);
+  r.hitDragon(r.dragon.hp);
   assert(r.won);
   assert.equal(r.dragon.hp, 0);
 });

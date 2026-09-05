@@ -1,10 +1,25 @@
 import { Multiplayer } from "./multiplayer";
+import { VoiceChat } from "./voice";
+import { FaceCamera } from "./face-camera";
 import { miningDuration, weapon } from "./combat";
+import { harvestAllowed, harvestHint, isMineableBlock, minedResource } from "./mining";
+import { armorSlot, armorMultiplier, normalizeEquipment, emptyEquipment } from "./armor";
 import { InventoryPack, type PackData, type Stack } from "./inventory";
 import { applyCraftResult, type SlotRef } from "./inventory-gestures";
-import { BlockCracks, DroppedItems, handSwing, type DropData } from "./interaction-effects";
+import {
+  BlockCracks,
+  DroppedItems,
+  handSwing,
+  SWING_DURATION,
+  type DropData,
+} from "./interaction-effects";
+import { PointerMotion } from "./pointer-motion";
+import { requestRawPointerLock } from "./pointer-capture";
+import { clearDamagePath, fallDamage, moveVertical } from "./player-physics";
+import { damageCauseLabel, type DamageCause } from "./damage-causes";
 import { ignitePortal } from "./portals";
 import * as THREE from "three";
+import { DRAGON_MAX_HEALTH, restoreDragonHealth } from "./dragon-balance";
 import { Adventure, type AdventureData } from "./adventure";
 import { WorldRenderer } from "./renderer";
 import { BLOCKS, ITEMS, RECIPES, DIMENSIONS, item, type Dimension, type Mode } from "./blocks";
@@ -15,9 +30,16 @@ import { Atmosphere } from "./atmosphere";
 import { SkinModel, readSkin, type FirstPersonArm } from "./skin-model";
 import { DEFAULT_SETTINGS, DEFAULT_BINDINGS, type Action, type GameSettings } from "./settings";
 import { normalizeDifficulty, difficultyRules, type Difficulty } from "./difficulty";
-import { HorrorDirector, type HorrorEvent, type HorrorSave } from "./horror-director";
+import {
+  HorrorDirector,
+  type HorrorContext,
+  type HorrorEvent,
+  type HorrorSave,
+} from "./horror-director";
 import { HorrorPresentation } from "./horror-presentation";
 import { placeHorrorEvent } from "./horror-placement";
+import { HorrorHunt, type HuntWire } from "./horror-hunt";
+import { createHuntEnvironment } from "./horror-terrain";
 export type { GameSettings } from "./settings";
 export type Snapshot = {
   needsCapture: boolean;
@@ -30,6 +52,7 @@ export type Snapshot = {
   mode: Mode;
   difficulty: Difficulty;
   horrorOverlay: number;
+  horrorThreat: HuntWire | null;
   dimension: Dimension;
   health: number;
   food: number;
@@ -108,6 +131,7 @@ type SavedGame = {
   won?: boolean;
   crystals?: number[];
   dragon?: number;
+  dragonMaxHealth?: number;
   visited?: Dimension[];
   mined?: number;
   placed?: number;
@@ -125,11 +149,17 @@ export class Game extends WorldRenderer {
   drops = new DroppedItems(this);
   cracks: BlockCracks;
   swingTime = 0;
+  pointerMotion = new PointerMotion();
   active = false;
   started = false;
   mode: Mode = "survival";
   difficulty: Difficulty = "normal";
   horrorDirector = new HorrorDirector();
+  horrorHunt = new HorrorHunt();
+  horrorThreat: HuntWire | null = null;
+  private deathHandled = false;
+  fallDistance = 0;
+  lastDamageNotice = -Infinity;
   horror: HorrorPresentation;
   position = new THREE.Vector3(8, 20, 22);
   velocity = new THREE.Vector3();
@@ -149,6 +179,7 @@ export class Game extends WorldRenderer {
   mineKey = "";
   leftDown = false;
   rightDown = false;
+  canvasContextUntil = 0;
   attackCooldown = 0;
   actionCooldown = 0;
   portalCooldown = 0;
@@ -172,7 +203,7 @@ export class Game extends WorldRenderer {
   saveAvailable = false;
   won = false;
   crystalsDestroyed: number[] = [];
-  dragonHealth = 300;
+  dragonHealth = DRAGON_MAX_HEALTH;
   visited: Dimension[] = ["overworld"];
   mined = 0;
   placed = 0;
@@ -187,6 +218,8 @@ export class Game extends WorldRenderer {
   fluid: FluidSystem;
   atmosphere: Atmosphere;
   avatar: SkinModel | null = null;
+  voice: VoiceChat;
+  faceCamera: FaceCamera;
   oxygen = 20;
   sprinting = false;
   crouching = false;
@@ -217,6 +250,14 @@ export class Game extends WorldRenderer {
     super(mount);
     this.onUpdate = onUpdate;
     this.onMenu = onMenu;
+    this.voice = new VoiceChat(
+      (audio) => this.net?.send({ type: "voice", audio }),
+      () => !!this.net?.connected,
+      () => {
+        this.net?.emit();
+      },
+    );
+    this.faceCamera = new FaceCamera((frame) => this.net?.sendFaceFrame(frame));
     this.iconAtlas = this.atlas.canvas.toDataURL();
     this.outline = new THREE.LineSegments(
       new THREE.EdgesGeometry(new THREE.BoxGeometry(1.006, 1.006, 1.006)),
@@ -264,7 +305,7 @@ export class Game extends WorldRenderer {
     window.addEventListener("beforeunload", this.beforeUnload);
     this.canvas.addEventListener("mousedown", this.mouseDown);
     window.addEventListener("mouseup", this.mouseUp);
-    this.canvas.addEventListener("contextmenu", this.contextMenu);
+    document.addEventListener("contextmenu", this.contextMenu, true);
     this.canvas.addEventListener("wheel", this.wheel, { passive: false });
     this.canvas.addEventListener("touchstart", this.touchStart, {
       passive: false,
@@ -283,7 +324,7 @@ export class Game extends WorldRenderer {
   }
   snapshot(): Snapshot {
     this.syncPack();
-    const result = this.pack.recipe(this.nearBlock(29));
+    const result = this.pack.recipe();
     return {
       needsCapture: this.needsCapture,
       pack: this.pack.snapshot(),
@@ -295,6 +336,7 @@ export class Game extends WorldRenderer {
       mode: this.mode,
       difficulty: this.difficulty ?? "normal",
       horrorOverlay: this.horror?.overlay ?? 0,
+      horrorThreat: this.horrorThreat ?? null,
       dimension: this.world.dimension,
       health: this.health,
       food: this.food,
@@ -356,40 +398,153 @@ export class Game extends WorldRenderer {
     if (this.difficulty !== next) {
       this.horror?.clear();
       this.horrorDirector?.reset("local");
+      this.resetHorrorHunt();
       this.regenerationTimer = 0;
     }
     this.difficulty = next;
     this.emit();
   }
   receiveHorror(event: HorrorEvent) {
-    if (this.difficulty !== "horror" || !this.active || this.needsCapture || this.health <= 0) return;
+    if (
+      this.difficulty !== "horror" ||
+      this.health <= 0 ||
+      ((!this.active || this.needsCapture) && event.reason !== "caught")
+    )
+      return;
     if (event.dimension !== this.world.dimension) return;
+    if (event.reason === "caught" && !event.viewerIds.includes(this.net?.id ?? "local")) return;
     this.horror?.event(event);
   }
+  horrorCaught() {
+    return (
+      this.horrorThreat?.phase === "caught" &&
+      this.horrorThreat.targetId === (this.net?.id ?? "local")
+    );
+  }
+  resetHorrorHunt() {
+    this.horrorHunt?.reset("local");
+    this.horrorThreat = null;
+  }
+  horrorContext(active = this.active && !this.needsCapture && !document.hidden): HorrorContext {
+    return {
+      id: "local",
+      p: this.position.toArray(),
+      yaw: this.yaw,
+      pitch: this.pitch,
+      dimension: this.world.dimension,
+      difficulty: this.difficulty,
+      active,
+      alive: this.health > 0,
+      night: this.clock % 600 > 350,
+      underground: this.world.surface(this.position.x, this.position.z) - this.position.y > 5,
+    };
+  }
+  huntEnvironment() {
+    return createHuntEnvironment(
+      () => this.world,
+      (_dimension, x, z) => this.ensure(x, z),
+    );
+  }
+  killByHorror(huntId: string) {
+    if (
+      this.net ||
+      this.difficulty !== "horror" ||
+      this.health <= 0 ||
+      this.horrorThreat?.id !== huntId ||
+      this.horrorThreat.phase !== "caught"
+    )
+      return;
+    this.health = 0;
+    this.damageFlash = 0.45;
+    this.audio.play("hurt");
+    this.finishDeath();
+    this.emit();
+  }
   updateHorror(dt: number) {
-    const active = this.active && !this.needsCapture && this.health > 0 && !document.hidden && (!this.net || this.net.connected);
+    const active =
+      this.active &&
+      !this.needsCapture &&
+      this.health > 0 &&
+      !document.hidden &&
+      (!this.net || this.net.connected);
     if (!this.net && this.difficulty === "horror") {
-      const underground = this.world.surface(this.position.x, this.position.z) - this.position.y > 5;
-      for (const event of this.horrorDirector.tick(dt, [{
-        id: "local", p: this.position.toArray(), yaw: this.yaw, pitch: this.pitch,
-        dimension: this.world.dimension, difficulty: this.difficulty, active,
-        alive: this.health > 0, night: this.clock % 600 > 350, underground,
-      }])) {
+      const hunt = (this.horrorHunt ??= new HorrorHunt());
+      const player = this.horrorContext(active),
+        env = this.huntEnvironment();
+      const engaged = hunt.view("local").length > 0;
+      for (const event of this.horrorDirector.tick(dt, [
+        { ...player, active: active && !engaged },
+      ])) {
+        if (event.kind === "jumpscare") {
+          const threat = hunt.start(event, [player], env);
+          if (threat) {
+            this.horrorThreat = threat;
+            this.horror?.clear();
+            this.notify("Gość cię obserwuje. Znajdź drogę ucieczki albo przygotuj broń.");
+          }
+          continue;
+        }
         if (["watcher", "silhouette", "approach"].includes(event.kind)) {
-          placeHorrorEvent(event, this.position.toArray(), underground, this.world);
+          placeHorrorEvent(event, this.position.toArray(), player.underground, this.world);
         }
         this.receiveHorror(event);
       }
+      const result = hunt.tick(dt, [player], env);
+      for (const signal of result.signals) {
+        if (signal.type === "caught" && signal.playerId === "local") {
+          this.horrorThreat = signal.hunt;
+          this.velocity?.set(0, 0, 0);
+          this.keys?.clear();
+          this.leftDown = this.rightDown = false;
+          this.horror?.clear();
+          this.receiveHorror({
+            id: signal.hunt.id + ":caught",
+            kind: "jumpscare",
+            p: signal.hunt.p,
+            duration: 1.3,
+            intensity: 1,
+            seed: signal.hunt.seed,
+            reason: "caught",
+            viewerIds: ["local"],
+            dimension: signal.hunt.dimension,
+            at: this.horrorDirector.elapsed,
+            yaw: signal.hunt.yaw,
+          });
+        } else if (signal.type === "death" && signal.playerId === "local") {
+          this.killByHorror(signal.huntId);
+        } else if (signal.type === "ended" && this.health > 0) {
+          this.notify(
+            signal.reason === "banished"
+              ? "Gość został przepędzony. Przez chwilę jesteś bezpieczny."
+              : "Udało ci się zgubić Gościa. Złap oddech.",
+          );
+        }
+      }
+      this.horrorThreat = hunt.view("local")[0] ?? null;
     }
     this.horror?.update(dt, {
-      enabled: this.difficulty === "horror", active, dimension: this.world.dimension,
-      player: this.position, yaw: this.yaw, pitch: this.pitch,
+      enabled: this.difficulty === "horror",
+      active:
+        (active ||
+          (this.horrorCaught() && !document.hidden && (!this.net || this.net.connected))) &&
+        this.health > 0,
+      dimension: this.world.dimension,
+      player: this.position,
+      yaw: this.yaw,
+      pitch: this.pitch,
       time: this.net?.horrorClock ?? this.horrorDirector.elapsed,
-      volume: this.settings.horrorVolume, jumpscares: this.settings.horrorJumpscares,
+      huntTime: this.net?.huntClock ?? this.horrorHunt?.elapsed ?? 0,
+      threat: this.horrorThreat ?? null,
+      viewerId: this.net?.id ?? "local",
+      volume: this.settings.horrorVolume,
+      jumpscares: this.settings.horrorJumpscares,
       reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches,
     });
   }
   start(mode: Mode, resume = false, seed = 24680, difficulty: Difficulty = this.difficulty) {
+    this.fallDistance = 0;
+    this.resetHorrorHunt();
+    this.deathHandled = false;
     if (this.net) {
       this.net.close();
       this.net = null;
@@ -398,8 +553,7 @@ export class Game extends WorldRenderer {
     if (!this.started || !resume) {
       if (resume && this.saveAvailable) {
         if (!this.load()) return;
-      }
-      else {
+      } else {
         this.difficulty = normalizeDifficulty(difficulty);
         this.horrorDirector = new HorrorDirector(seed);
         this.hungerTimer = this.regenerationTimer = 0;
@@ -422,7 +576,7 @@ export class Game extends WorldRenderer {
         this.oxygen = 20;
         this.xp = 0;
         this.won = false;
-        this.dragonHealth = 300;
+        this.dragonHealth = DRAGON_MAX_HEALTH;
         this.crystalsDestroyed = [];
         this.clock = 90;
         this.mined = 0;
@@ -470,6 +624,13 @@ export class Game extends WorldRenderer {
       this.needsCapture = false;
       return;
     }
+    if (document.pointerLockElement === this.canvas) {
+      this.needsCapture = false;
+      this.lockPending = false;
+      return;
+    }
+    (this.pointerMotion ??= new PointerMotion()).reset();
+    this.pointerMotion.raw = false;
     const generation = ++this.lockGeneration;
     this.lockPending = true;
     this.captureSince = performance.now();
@@ -478,8 +639,10 @@ export class Game extends WorldRenderer {
     this.canvas.tabIndex = -1;
     this.canvas.focus({ preventScroll: true });
     try {
-      const attempt = this.canvas.requestPointerLock();
-      Promise.resolve(attempt)
+      requestRawPointerLock(this.canvas, () => this.active && generation === this.lockGeneration)
+        .then((raw) => {
+          if (generation === this.lockGeneration) this.pointerMotion.raw = raw;
+        })
         .catch(() => {})
         .finally(() => {
           if (generation !== this.lockGeneration) return;
@@ -502,6 +665,7 @@ export class Game extends WorldRenderer {
     this.lockPending = false;
     this.needsCapture = false;
     this.swingTime = 0;
+    this.pointerMotion?.reset();
     this.active = false;
     this.horror?.clear();
     this.pauseReason = panel;
@@ -518,6 +682,7 @@ export class Game extends WorldRenderer {
     this.emit();
   }
   toMenu() {
+    this.resetHorrorHunt();
     this.pause("");
     this.net?.close();
     this.net = null;
@@ -528,6 +693,9 @@ export class Game extends WorldRenderer {
     this.emit();
   }
   respawn() {
+    this.fallDistance = 0;
+    this.resetHorrorHunt();
+    this.deathHandled = false;
     this.horror?.clear();
     this.horrorDirector?.reset("local");
     this.hungerTimer = this.regenerationTimer = 0;
@@ -546,6 +714,7 @@ export class Game extends WorldRenderer {
     this.resume();
   }
   select(slot: number) {
+    if (this.horrorCaught()) return;
     this.selected = ((slot % 9) + 9) % 9;
     this.mining = 0;
     this.emit();
@@ -606,7 +775,7 @@ export class Game extends WorldRenderer {
     this.commitPack();
   }
   equip(id: number) {
-    if ([121, 122].includes(id)) {
+    if (armorSlot(id)) {
       this.adventure.equipArmor(id);
       this.emit();
       return;
@@ -704,7 +873,9 @@ export class Game extends WorldRenderer {
     this.emit();
   }
   travel(d: Dimension) {
+    this.fallDistance = 0;
     if (d === this.world.dimension) return;
+    this.resetHorrorHunt();
     this.dragonHealth = this.dragon?.hp ?? this.dragonHealth;
     this.clearDynamic();
     this.fluid.clear();
@@ -893,40 +1064,73 @@ export class Game extends WorldRenderer {
       m.die();
       this.xp += m.hostile ? 8 : 3;
       this.add(m.hostile ? 109 : m.kind === "sheep" ? 32 : 107, m.hostile ? 2 : 1);
+      if (m.kind === "cow") this.add(140, 1 + Math.floor(Math.random() * 2));
       if (m.kind === "enderman") this.add(111, 1);
       this.notify(MOB_NAMES[m.kind] + " • +" + (m.hostile ? 8 : 3) + " PD");
     }
   }
-  damage(n: number) {
-    if (this.mode === "creative" || this.damageTimer > 0 || this.health <= 0) return;
-    n = Math.max(
-      1,
-      Math.ceil(
-        n * (!this.net ? difficultyRules(this.difficulty).environmentDamage : 1) *
-          (this.adventure.data.armor === 122 ? 0.5 : this.adventure.data.armor === 121 ? 0.72 : 1),
-      ),
-    );
+  damage(n: number, reason: DamageCause = "environment") {
+    if (
+      !Number.isFinite(n) ||
+      n <= 0 ||
+      this.mode === "creative" ||
+      this.damageTimer > 0 ||
+      this.health <= 0 ||
+      this.horrorCaught()
+    )
+      return;
+    if (this.net) {
+      if (!this.net.connected || !["fall", "lava", "drowning", "void"].includes(reason)) return;
+      this.net.request({ type: "environmentDamage", amount: n, reason });
+      // Health and death come exclusively from the server; throttle contact reports.
+      this.damageTimer = 0.8;
+      return;
+    }
+    if (!["fall", "void", "drowning", "hunger", "horror"].includes(reason))
+      n *= armorMultiplier(
+        normalizeEquipment(this.adventure.data.equipment, this.adventure.data.armor),
+      );
+    n = Math.max(1, Math.ceil(n * difficultyRules(this.difficulty).environmentDamage));
     this.health = Math.max(0, this.health - n);
     this.damageTimer = 0.8;
     this.damageFlash = 0.45;
     this.audio.play("hurt");
-    if (this.health <= 0) {
-      if (this.net) this.net.sendProfile();
-      else {
-        this.syncPack();
-        for (const [id, n] of Object.entries(this.inventory))
-          this.drops.spawn(Number(id), n, this.position.clone().add(new THREE.Vector3(0, 0.8, 0)));
-        this.pack.reset();
-        this.inventory = {};
-        this.hotbar = Array(9).fill(0);
-      }
-      this.pause("death");
+    if (this.health <= 0) this.finishDeath();
+    else if (performance.now() - (this.lastDamageNotice ?? -Infinity) >= 3000) {
+      this.lastDamageNotice = performance.now();
+      this.notify(damageCauseLabel(reason) ?? "Obrażenia");
     }
     this.emit();
   }
+  damageFrom(n: number, source: THREE.Vector3, reason: DamageCause) {
+    if (clearDamagePath(source, this.playerEyeRay().origin, (x, y, z) => this.world.solid(x, y, z)))
+      this.damage(n, reason);
+  }
+  finishDeath() {
+    if (this.deathHandled || this.health > 0) return;
+    this.deathHandled = true;
+    if (this.net) this.net.sendProfile();
+    else {
+      this.syncPack();
+      for (const [id, n] of Object.entries(this.inventory))
+        this.drops.spawn(Number(id), n, this.position.clone().add(new THREE.Vector3(0, 0.8, 0)));
+      for (const id of Object.values(
+        normalizeEquipment(this.adventure.data.equipment, this.adventure.data.armor),
+      ))
+        if (id) this.drops.spawn(id, 1, this.position.clone().add(new THREE.Vector3(0, 0.8, 0)));
+      this.adventure.data.equipment = emptyEquipment();
+      this.adventure.data.armor = 0;
+      this.pack.reset();
+      this.inventory = {};
+      this.hotbar = Array(9).fill(0);
+    }
+    this.resetHorrorHunt();
+    this.pause("death");
+  }
   explode = (pos: THREE.Vector3) => {
     this.burst(pos, "#d99b58", 30);
-    if (this.position.distanceTo(pos) < 4) this.damage(8);
+    if (this.position.distanceTo(pos) < 4)
+      this.damageFrom(8, pos.clone().add(new THREE.Vector3(0, 1, 0)), "explosion");
     for (let x = -2; x <= 2; x++)
       for (let y = 0; y < 3; y++)
         for (let z = -2; z <= 2; z++)
@@ -938,10 +1142,10 @@ export class Game extends WorldRenderer {
             if (id && ![12, 13, 18, 35].includes(id)) this.world.set(wx, wy, wz, 0);
           }
   };
-  shootEnemy = (pos: THREE.Vector3) => {
+  shootEnemy = (pos: THREE.Vector3, power = 4, speed = 12, aim?: THREE.Vector3) => {
     if (!this.active || this.mode === "creative") return;
-    const target = this.position.clone().add(new THREE.Vector3(0, 1, 0));
-    const velocity = target.sub(pos).normalize().multiplyScalar(12);
+    const target = aim?.clone() ?? this.position.clone().add(new THREE.Vector3(0, 1, 0));
+    const velocity = target.sub(pos).normalize().multiplyScalar(speed);
     const mesh = cube(
       this.scene,
       this.world.dimension === "end" ? "#d397fb" : "#f9a351",
@@ -953,9 +1157,10 @@ export class Game extends WorldRenderer {
       0.35,
       true,
     );
-    this.projectiles.push({ mesh, velocity, life: 5, enemy: true, power: 4 });
+    this.projectiles.push({ mesh, velocity, life: 5, enemy: true, power });
   };
   shoot() {
+    if (this.horrorCaught()) return;
     if (this.net) {
       this.net.shoot();
       return;
@@ -1004,7 +1209,11 @@ export class Game extends WorldRenderer {
         y = Math.floor(p.y + dir.y * t),
         z = Math.floor(p.z + dir.z * t),
         id = this.world.get(x, y, z);
-      if (id && (id !== 7 || this.hotbar[this.selected] === 114) && id !== 15)
+      if (
+        id &&
+        (id !== 7 || this.hotbar[this.selected] === 114) &&
+        (id !== 15 || this.hotbar[this.selected] === 115)
+      )
         return { x, y, z, px, py, pz, id, distance: t };
       px = x;
       py = y;
@@ -1013,13 +1222,13 @@ export class Game extends WorldRenderer {
     return null;
   }
   attack() {
-    if (this.attackCooldown > 0) return false;
-    this.swingTime = 0.36;
+    if (this.attackCooldown > 0 || this.horrorCaught()) return false;
+    if (!(this.swingTime > 0)) this.swingTime = SWING_DURATION;
     if (this.net) return this.net.attack();
     const ray = this.playerEyeRay();
     let closest = weapon(this.hotbar[this.selected]).reach,
-      hit: Mob | Crystal | Dragon | null = null;
-    const test = (obj: Mob | Crystal | Dragon, pos: THREE.Vector3, r: number) => {
+      hit: Mob | Crystal | Dragon | HuntWire | null = null;
+    const test = (obj: Mob | Crystal | Dragon | HuntWire, pos: THREE.Vector3, r: number) => {
       const at = ray.intersectSphere(new THREE.Sphere(pos, r), new THREE.Vector3());
       if (at) {
         const dist = at.distanceTo(ray.origin);
@@ -1033,7 +1242,32 @@ export class Game extends WorldRenderer {
       if (!m.dead) test(m, m.group.position.clone().add(new THREE.Vector3(0, 1, 0)), m.size);
     for (const c of this.crystals) if (c.alive) test(c, c.mesh.position, 1);
     if (this.dragon && !this.dragon.dead) test(this.dragon, this.dragon.group.position, 3);
-    const entity = hit as Mob | Crystal | Dragon | null;
+    const threat = this.horrorThreat;
+    if (this.difficulty === "horror" && threat && threat.dimension === this.world.dimension)
+      test(threat, new THREE.Vector3(...threat.p).add(new THREE.Vector3(0, 1.75, 0)), 0.85);
+    const targeted = hit as Mob | Crystal | Dragon | HuntWire | null;
+    if (threat && targeted === threat) {
+      const stats = weapon(this.hotbar[this.selected]);
+      const result = this.horrorHunt.attack(
+        {
+          huntId: threat.id,
+          attackerId: "local",
+          damage: stats.damage,
+          reach: stats.reach,
+          cooldown: stats.cooldown,
+        },
+        [this.horrorContext()],
+        this.huntEnvironment(),
+      );
+      this.attackCooldown = stats.cooldown;
+      if (result.ok) {
+        this.audio.play("hit");
+        this.horrorThreat = this.horrorHunt.view("local")[0] ?? null;
+        this.emit();
+      }
+      return result.ok;
+    }
+    const entity = targeted as Mob | Crystal | Dragon | null;
     if (entity) {
       const id = this.hotbar[this.selected];
       if (entity instanceof Mob) this.hitMob(entity, weapon(id).damage);
@@ -1055,6 +1289,7 @@ export class Game extends WorldRenderer {
     }
   }
   interact() {
+    if (this.horrorCaught()) return;
     if (this.actionCooldown > 0) return;
     if (this.net && this.net.interact()) return;
     const id = this.hotbar[this.selected];
@@ -1117,7 +1352,7 @@ export class Game extends WorldRenderer {
     }
     if (id === 115 && t) {
       if (this.world.dimension !== "nether") {
-        this.world.set(t.px, t.py, t.pz, 7);
+        if (!this.world.pourWater(t.px, t.py, t.pz)) return;
         this.audio.play("splash");
       } else {
         this.burst(new THREE.Vector3(t.px, t.py, t.pz), "#b8c4c0", 15);
@@ -1161,6 +1396,7 @@ export class Game extends WorldRenderer {
     this.emit();
   }
   mine(dt: number) {
+    if (this.horrorCaught()) return;
     if (this.hotbar[this.selected] === 105) {
       if (this.actionCooldown <= 0) this.shoot();
       return;
@@ -1171,26 +1407,23 @@ export class Game extends WorldRenderer {
       this.mining = 0;
       return;
     }
-    if ([7, 13, 18, 35].includes(t.id)) {
+    if (!isMineableBlock(t.id, t.y)) {
       this.mining = 0;
       return;
     }
-    const key = t.x + "," + t.y + "," + t.z;
+    const held = this.hotbar[this.selected] ?? 0;
+    const key = t.x + "," + t.y + "," + t.z + "," + held;
     if (key !== this.mineKey) {
       this.mineKey = key;
       this.mining = 0;
-    }
-    const held = this.hotbar[this.selected];
-    if (this.mode === "survival" && t.id === 12 && held !== 103) {
-      if (this.actionCooldown <= 0) {
-        this.notify("Obsydian wymaga diamentowego kilofa.");
-        this.actionCooldown = 2;
+      if (this.mode === "survival") {
+        const hint = harvestHint(t.id, held);
+        if (hint) this.notify(hint);
       }
-      return;
     }
     let duration = miningDuration(t.id, held);
     if (this.mode === "creative") duration = 0.13;
-    this.mining += dt / duration;
+    this.mining = duration === 0 ? 1 : this.mining + dt / duration;
     if (this.mining >= 1) {
       if (this.net) {
         this.net.mine(t);
@@ -1199,13 +1432,18 @@ export class Game extends WorldRenderer {
         return;
       }
       this.world.set(t.x, t.y, t.z, 0);
-      if (this.mode === "survival" && !this.adventure.mineSpecial(t.id, t.x, t.y, t.z)) {
-        const drop = t.id === 1 ? 2 : t.id === 3 ? 9 : t.id === 20 ? 109 : t.id === 22 ? 111 : t.id;
-        this.add(drop);
+      const harvest = harvestAllowed(t.id, held);
+      // Container contents remain recoverable even when the block itself cannot drop.
+      const special =
+        ((this.mode === "survival" && harvest) || [29, 61].includes(t.id)) &&
+        this.adventure.mineSpecial(t.id, t.x, t.y, t.z);
+      if (this.mode === "survival" && harvest && !special) {
+        const drop = minedResource(t.id);
+        this.add(drop.id, drop.n);
         if (t.id === 6 && Math.random() < 0.12) this.add(106);
       }
       this.mined++;
-      this.xp += t.id === 22 ? 8 : 1;
+      if (this.mode === "survival" && harvest) this.xp += t.id === 22 ? 8 : 1;
       this.burst(new THREE.Vector3(t.x + 0.5, t.y + 0.5, t.z + 0.5), BLOCKS[t.id].color, 10);
       this.audio.play("break");
       this.mining = 0;
@@ -1238,6 +1476,10 @@ export class Game extends WorldRenderer {
     return false;
   }
   move(dt: number) {
+    if (this.horrorCaught()) {
+      this.velocity.set(0, 0, 0);
+      return;
+    }
     const p = this.position,
       w = this.world,
       k = this.keys;
@@ -1280,29 +1522,41 @@ export class Game extends WorldRenderer {
         (this.crouching && this.grounded && !this.flying && !w.solid(p.x, p.y - 0.12, p.z))
       ) {
         p[axis] -= delta;
-        if (navigator.maxTouchPoints > 0 && this.grounded && delta) this.velocity.y = 8.2;
+        if (
+          window.matchMedia?.("(pointer: coarse)").matches &&
+          !window.matchMedia?.("(any-pointer: fine)").matches &&
+          this.grounded &&
+          delta
+        )
+          this.velocity.y = 8.2;
       }
     }
-    const oldY = p.y,
-      fall = this.velocity.y;
-    p.y += this.velocity.y * dt;
-    this.grounded = false;
-    if (this.collision(p)) {
-      if (this.velocity.y < 0) {
-        p.y = Math.floor(oldY + 0.01);
-        if (this.collision(p)) p.y = oldY;
-        this.grounded = true;
-        if (fall < -13 && !inWater) this.damage(Math.floor((-fall - 12) * 0.65));
-      } else p.y = oldY;
+    if (this.flying || inWater || this.velocity.y >= 0) this.fallDistance = 0;
+    const vertical = moveVertical(
+      p,
+      this.velocity.y * dt,
+      (pos) => this.collision(pos),
+      this.grounded,
+    );
+    this.grounded = vertical.landed;
+    const landedInWater = inWater || w.waterAt(p.x, p.y + 0.1, p.z);
+    if (!this.flying && !landedInWater)
+      this.fallDistance = (this.fallDistance || 0) + vertical.distance;
+    else this.fallDistance = 0;
+    if (vertical.hit) {
+      if (vertical.landed) {
+        if (!landedInWater && !this.flying) this.damage(fallDamage(this.fallDistance), "fall");
+        this.fallDistance = 0;
+      }
       this.velocity.y = 0;
     }
     if (p.y < -15) {
-      this.damage(100);
+      this.damage(100, "void");
       if (this.mode === "creative") p.y = 40;
     }
     if (p.y > 110) p.y = 110;
-    if (w.get(p.x, p.y, p.z) === 15 || w.get(p.x, p.y - 0.1, p.z) === 15) this.damage(4);
-    if (p.y < 1 && !this.collision(p)) this.damage(100);
+    if (w.get(p.x, p.y, p.z) === 15 || w.get(p.x, p.y - 0.1, p.z) === 15) this.damage(4, "lava");
+    if (p.y < 1 && !this.collision(p)) this.damage(100, "void");
     if ((forward || strafe) && this.grounded) {
       this.stepTimer -= dt;
       if (this.stepTimer <= 0) {
@@ -1312,8 +1566,10 @@ export class Game extends WorldRenderer {
     }
     const rules = difficultyRules(this.difficulty);
     if (!this.net && this.mode === "survival") {
-      this.hungerTimer += dt * ((forward || strafe) && this.grounded ? sprint ? 1.8 : 1 : 0.25) * rules.hungerRate;
-      this.regenerationTimer = this.food > 14 && this.damageTimer <= 0 ? (this.regenerationTimer || 0) + dt : 0;
+      this.hungerTimer +=
+        dt * ((forward || strafe) && this.grounded ? (sprint ? 1.8 : 1) : 0.25) * rules.hungerRate;
+      this.regenerationTimer =
+        this.food > 14 && this.damageTimer <= 0 ? (this.regenerationTimer || 0) + dt : 0;
       if (this.regenerationTimer >= rules.regenerationSeconds) {
         this.regenerationTimer = 0;
         this.health = Math.min(20, this.health + rules.regenerationAmount);
@@ -1322,14 +1578,14 @@ export class Game extends WorldRenderer {
     if (!this.net && this.mode === "survival" && this.hungerTimer > 25) {
       this.food = Math.max(0, this.food - 1);
       this.hungerTimer = 0;
-      if (this.food === 0) this.damage(1);
+      if (this.food === 0) this.damage(1, "hunger");
     }
     if (inWater && !this.wasInWater) this.audio.play("splash");
     this.wasInWater = inWater;
     const submerged = w.waterAt(p.x, p.y + this.eyeHeight, p.z);
     if (this.mode === "survival") {
       this.oxygen = Math.max(0, Math.min(20, this.oxygen + (submerged ? -1.8 : 6) * dt));
-      if (this.oxygen <= 0) this.damage(2);
+      if (this.oxygen <= 0) this.damage(2, "drowning");
     }
     if (inWater) {
       const l = this.fluid.level(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z));
@@ -1356,6 +1612,7 @@ export class Game extends WorldRenderer {
     this.camera.position.set(p.x, p.y + this.eyeHeight + bob, p.z);
     this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
     if (this.avatar) {
+      this.avatar.setEquipment(this.adventure.data.equipment);
       this.avatar.group.position.copy(p);
       this.avatar.group.rotation.y = this.yaw + Math.PI;
       this.avatar.head.rotation.x = -this.pitch;
@@ -1364,7 +1621,7 @@ export class Game extends WorldRenderer {
         this.time,
         !!(forward || strafe),
         this.crouching,
-        this.swingTime > 0 ? 1 - this.swingTime / 0.36 : -1,
+        this.swingTime > 0 ? 1 - this.swingTime / SWING_DURATION : -1,
       );
     }
     if (this.perspective !== 0) {
@@ -1388,9 +1645,16 @@ export class Game extends WorldRenderer {
     this.torch.intensity = this.hotbar[this.selected] === 48 ? 9 : 0;
   }
   tick = (dt: number) => {
+    this.faceCamera?.update(dt);
+    this.avatar?.setFaceTexture(this.faceCamera?.texture ?? null);
     this.net?.tick(dt);
-    if (!this.net && this.started && !this.preview && !document.hidden &&
-      (this.active || ["furnace", "chest", "inventory", "crafting"].includes(this.pauseReason)))
+    if (
+      !this.net &&
+      this.started &&
+      !this.preview &&
+      !document.hidden &&
+      (this.active || ["furnace", "chest", "inventory", "crafting"].includes(this.pauseReason))
+    )
       this.adventure.tickFurnaces(dt);
     this.frames++;
     this.frameClock += dt;
@@ -1400,7 +1664,12 @@ export class Game extends WorldRenderer {
       this.frameClock = 0;
     }
     if (!this.active) {
-      this.horror?.clear();
+      if (
+        this.horrorCaught() ||
+        (!this.net && this.difficulty === "horror" && this.horrorHunt?.view("local").length)
+      )
+        this.updateHorror(dt);
+      if (!this.horrorCaught()) this.horror?.clear();
       this.audio.update(0, false, this.world.dimension);
       if (this.avatar) this.avatar.group.visible = false;
       this.atmosphere.tick(
@@ -1432,7 +1701,7 @@ export class Game extends WorldRenderer {
     this.adventure.tick(dt);
     if (!this.net) this.drops.tick(dt);
     this.swingTime = Math.max(0, this.swingTime - dt);
-    if (this.leftDown && this.swingTime <= 0) this.swingTime = 0.36;
+    if (this.leftDown && this.swingTime <= 0) this.swingTime = SWING_DURATION;
     this.attackCooldown = Math.max(0, this.attackCooldown - dt);
     this.actionCooldown = Math.max(0, this.actionCooldown - dt);
     this.damageTimer -= dt;
@@ -1440,12 +1709,13 @@ export class Game extends WorldRenderer {
     this.portalCooldown -= dt;
     this.move(dt);
     this.updateHorror(dt);
+    if (!this.active) return;
     this.target = this.raycast();
     if (this.target) {
       this.outline.visible = true;
       this.outline.position.set(this.target.x + 0.5, this.target.y + 0.5, this.target.z + 0.5);
     } else this.outline.visible = false;
-    if (this.leftDown && this.attackCooldown <= 0) this.mine(dt);
+    if (this.leftDown) this.mine(dt);
     else this.mining = 0;
     if (this.rightDown) this.interact();
     this.cracks.update(this.target, this.mining);
@@ -1477,7 +1747,8 @@ export class Game extends WorldRenderer {
           this.time,
           this.position,
           this.world,
-          (n) => this.damage(n),
+          (n) =>
+            this.damageFrom(n, m.group.position.clone().add(new THREE.Vector3(0, 1.4, 0)), "mob"),
           this.shootEnemy,
           this.explode,
         );
@@ -1550,7 +1821,9 @@ export class Game extends WorldRenderer {
       this.world.biome(this.position.x, this.position.z),
       () => this.audio.play("thunder"),
     );
-    this.audio.music = this.settings.music * (this.difficulty === "horror" ? 0.18 * (1 - (this.horror?.overlay ?? 0)) : 1);
+    this.audio.music =
+      this.settings.music *
+      (this.difficulty === "horror" ? 0.18 * (1 - (this.horror?.overlay ?? 0)) : 1);
     this.audio.update(this.atmosphere.wet, true, this.world.dimension);
     this.meshTimer += dt;
     if (this.meshTimer > 0.1) {
@@ -1578,12 +1851,18 @@ export class Game extends WorldRenderer {
     }
     this.avatar?.setHeldItem(id);
     this.viewArm?.setHeldItem(id);
-    const swing = this.swingTime > 0
-      ? handSwing(1 - this.swingTime / 0.36)
-      : { x: 0, y: 0, z: 0, rx: 0, rz: 0 };
+    const swing =
+      this.swingTime > 0
+        ? handSwing(1 - this.swingTime / SWING_DURATION)
+        : { x: 0, y: 0, z: 0, rx: 0, rz: 0 };
     this.hand.rotation.set(0, 0, 0);
     this.hand.position.set(0, 0, 0);
-    this.viewArm?.pose(swing, this.settings.viewBob ? Math.sin(this.time * 3) * 0.008 : 0, this.camera.fov, this.camera.aspect);
+    this.viewArm?.pose(
+      swing,
+      this.settings.viewBob ? Math.sin(this.time * 3) * 0.008 : 0,
+      this.camera.fov,
+      this.camera.aspect,
+    );
     this.heldId = id;
     this.hand.visible = this.active && this.perspective === 0;
   }
@@ -1594,14 +1873,44 @@ export class Game extends WorldRenderer {
       const steps = Math.ceil((p.velocity.length() * dt) / 0.25);
       let remove = p.life <= 0;
       for (let j = 0; j < steps && !remove; j++) {
+        const from = p.mesh.position.clone();
         p.mesh.position.addScaledVector(p.velocity, dt / steps);
         const pos = p.mesh.position;
+        if (this.world.solid(pos.x, pos.y, pos.z)) {
+          remove = true;
+          break;
+        }
         if (p.enemy) {
           if (pos.distanceTo(this.position.clone().add(new THREE.Vector3(0, 1, 0))) < 1) {
-            this.damage(p.power);
+            this.damage(p.power, "projectile");
             remove = true;
           }
         } else {
+          const threat = this.horrorThreat;
+          if (
+            !this.net &&
+            this.difficulty === "horror" &&
+            threat &&
+            threat.dimension === this.world.dimension
+          ) {
+            const result = this.horrorHunt.projectileHit(
+              {
+                huntId: threat.id,
+                attackerId: "local",
+                damage: p.power,
+                from: from.toArray(),
+                to: pos.toArray(),
+              },
+              [this.horrorContext()],
+              this.huntEnvironment(),
+            );
+            if (result.ok) {
+              this.audio.play("hit");
+              this.horrorThreat = this.horrorHunt.view("local")[0] ?? null;
+              remove = true;
+              break;
+            }
+          }
           if (
             this.dragon &&
             !this.dragon.dead &&
@@ -1716,6 +2025,7 @@ export class Game extends WorldRenderer {
       this.avatar.dispose();
     }
     this.avatar = new SkinModel(data);
+    this.avatar.setFaceTexture(this.faceCamera?.texture ?? null);
     this.avatar.group.visible = false;
     this.scene.add(this.avatar.group);
     this.heldId = -1;
@@ -1768,6 +2078,7 @@ export class Game extends WorldRenderer {
         won: this.won,
         crystals: this.crystalsDestroyed,
         dragon: this.dragon?.hp ?? this.dragonHealth,
+        dragonMaxHealth: DRAGON_MAX_HEALTH,
         visited: this.visited,
         mined: this.mined,
         placed: this.placed,
@@ -1792,6 +2103,9 @@ export class Game extends WorldRenderer {
     }
   }
   restore(s: SavedGame) {
+    this.fallDistance = 0;
+    this.resetHorrorHunt();
+    this.deathHandled = false;
     if (
       s.v !== 1 ||
       !["overworld", "nether", "end"].includes(s.dimension) ||
@@ -1864,9 +2178,7 @@ export class Game extends WorldRenderer {
     this.crystalsDestroyed = Array.isArray(s.crystals)
       ? s.crystals.filter((n: number) => Number.isInteger(n) && n >= 0 && n < 8)
       : [];
-    this.dragonHealth = Number.isFinite(Number(s.dragon))
-      ? Math.max(0, Math.min(300, Number(s.dragon)))
-      : 300;
+    this.dragonHealth = restoreDragonHealth(s.dragon, s.dragonMaxHealth, !!s.won);
     this.visited = Array.isArray(s.visited)
       ? s.visited.filter((v: string) => ["overworld", "nether", "end"].includes(v))
       : ["overworld"];
@@ -1915,6 +2227,7 @@ export class Game extends WorldRenderer {
     }
   }
   keyDown = (e: KeyboardEvent) => {
+    if (this.horrorCaught()) return;
     const target = e.target as HTMLElement;
     if (target?.matches?.("input,textarea,select") || target?.closest?.('[contenteditable="true"]'))
       return;
@@ -1949,6 +2262,11 @@ export class Game extends WorldRenderer {
       this.pause("chat");
       return;
     }
+    if (action && ["journal", "inventory", "dimensions", "help"].includes(action)) {
+      e.preventDefault();
+      if (!e.repeat) this.pause(action);
+      return;
+    }
     if (this.needsCapture) return;
     if (!action) return;
     e.preventDefault();
@@ -1968,10 +2286,6 @@ export class Game extends WorldRenderer {
       if (this.settings.doubleTapSprint && now - this.lastForward < 300) this.sprinting = true;
       this.lastForward = now;
     }
-    if (action === "journal") this.pause("journal");
-    if (action === "inventory") this.pause("inventory");
-    if (action === "dimensions") this.pause("dimensions");
-    if (action === "help") this.pause("help");
     if (action === "fly" && this.mode === "creative") {
       this.flying = !this.flying;
       this.velocity.y = 0;
@@ -2013,15 +2327,23 @@ export class Game extends WorldRenderer {
   };
 
   mouseMove = (e: MouseEvent) => {
-    if (!this.active) return;
+    if (
+      this.horrorCaught() ||
+      !this.active ||
+      (e as MouseEvent & { sourceCapabilities?: { firesTouchEvents?: boolean } }).sourceCapabilities
+        ?.firesTouchEvents
+    )
+      return;
     if (document.pointerLockElement === this.canvas) {
-      this.yaw -= e.movementX * 0.0022 * this.settings.sensitivity;
+      const motion = this.pointerMotion?.sample(e, performance.now());
+      if (!motion) return;
+      this.yaw -= motion.x * 0.0022 * this.settings.sensitivity;
       this.pitch = Math.max(
         -1.54,
         Math.min(
           1.54,
           this.pitch -
-            e.movementY * 0.0022 * this.settings.sensitivity * (this.settings.invertY ? -1 : 1),
+            motion.y * 0.0022 * this.settings.sensitivity * (this.settings.invertY ? -1 : 1),
         ),
       );
     } else if (this.dragLook && this.lastDrag) {
@@ -2045,15 +2367,28 @@ export class Game extends WorldRenderer {
       this.needsCapture = false;
       this.lockPending = false;
       this.dragLook = false;
+      (this.pointerMotion ??= new PointerMotion()).lock(performance.now());
       this.emit();
-    } else if (this.active) {
-      this.needsCapture = true;
-      if (!this.lockPending && performance.now() - this.captureSince > 300) this.pause();
-      else this.emit();
+    } else {
+      this.pointerMotion?.reset();
+      if (this.active) {
+        this.needsCapture = true;
+        if (!this.lockPending && performance.now() - this.captureSince > 300) this.pause();
+        else this.emit();
+      }
     }
   };
   mouseDown = (e: MouseEvent) => {
-    if (!this.active) return;
+    if (
+      this.horrorCaught() ||
+      !this.active ||
+      (e as MouseEvent & { sourceCapabilities?: { firesTouchEvents?: boolean } }).sourceCapabilities
+        ?.firesTouchEvents
+    )
+      return;
+    // Opening a dialog releases pointer lock before Chrome dispatches contextmenu;
+    // its target can therefore be the new dialog, an input, or even the body.
+    if (e.button === 2) this.canvasContextUntil = performance.now() + 1000;
     if (document.pointerLockElement !== this.canvas) {
       this.capturePointer(true);
       e.preventDefault();
@@ -2063,7 +2398,12 @@ export class Game extends WorldRenderer {
     if (this.dragLook && e.button === 0) this.lastDrag = { x: e.clientX, y: e.clientY };
     if (e.button === (this.settings.swapMouse ? 2 : 0)) {
       this.leftDown = true;
-      this.attack();
+      if (
+        !this.attack() &&
+        this.target &&
+        miningDuration(this.target.id, this.hotbar[this.selected]) === 0
+      )
+        this.mine(0);
     }
     if (e.button === (this.settings.swapMouse ? 0 : 2)) {
       this.rightDown = true;
@@ -2077,14 +2417,29 @@ export class Game extends WorldRenderer {
     this.lastDrag = null;
     this.mining = 0;
   };
-  contextMenu = (e: Event) => e.preventDefault();
+  contextMenu = (e: Event) => {
+    const fromCanvas = performance.now() <= (this.canvasContextUntil || 0);
+    this.canvasContextUntil = 0;
+    if (fromCanvas) {
+      e.preventDefault();
+      return;
+    }
+    const target = e.target as Element | null;
+    if (target?.closest?.('input,textarea,[contenteditable]:not([contenteditable="false"])'))
+      return;
+    if (
+      target === this.canvas ||
+      target?.closest?.(".game-root,.game-dialog,.mc-inventory,.chest-inventory")
+    )
+      e.preventDefault();
+  };
   wheel = (e: WheelEvent) => {
-    if (!this.active) return;
+    if (!this.active || this.horrorCaught()) return;
     e.preventDefault();
     this.select(this.selected + (e.deltaY > 0 ? 1 : -1));
   };
   touchStart = (e: TouchEvent) => {
-    if (!this.active) return;
+    if (!this.active || this.horrorCaught()) return;
     e.preventDefault();
     if (this.touchLook) return;
     const t = e.changedTouches[0];
@@ -2092,7 +2447,7 @@ export class Game extends WorldRenderer {
     this.touchLook = { id: t.identifier, x: t.clientX, y: t.clientY };
   };
   touchMove = (e: TouchEvent) => {
-    if (!this.active || !this.touchLook) return;
+    if (!this.active || !this.touchLook || this.horrorCaught()) return;
     e.preventDefault();
     const t = Array.from(e.touches).find((t) => t.identifier === this.touchLook?.id);
     if (t) {
@@ -2120,13 +2475,18 @@ export class Game extends WorldRenderer {
   };
   beforeUnload = () => this.save(false);
   override dispose() {
+    this.resetHorrorHunt();
     this.save(false);
     this.net?.close();
     this.net = null;
+    this.voice.close();
+    this.faceCamera.dispose();
     document.removeEventListener("keydown", this.keyDown, true);
     document.removeEventListener("keyup", this.keyUp);
     document.removeEventListener("mousemove", this.mouseMove);
     document.removeEventListener("pointerlockchange", this.pointerLock);
+    document.removeEventListener("contextmenu", this.contextMenu, true);
+    this.canvasContextUntil = 0;
     window.removeEventListener("blur", this.blur);
     window.removeEventListener("beforeunload", this.beforeUnload);
     window.removeEventListener("mouseup", this.mouseUp);

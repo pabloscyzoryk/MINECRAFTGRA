@@ -8,6 +8,13 @@ import type { Game, Snapshot } from "@/lib/engine";
 import { inventoryGesture } from "@/lib/inventory-actions";
 import { useSlotGestures } from "@/hooks/use-slot-gestures";
 import { SlotCursor } from "./slot-cursor";
+import {
+  ARMOR_LABELS,
+  ARMOR_SLOTS,
+  armorSlot,
+  normalizeEquipment,
+  type ArmorSlot,
+} from "@/lib/armor";
 type Area = "slots" | "grid";
 export default function SlotInventory({
   game,
@@ -22,11 +29,50 @@ export default function SlotInventory({
     [catalog, setCatalog] = useState(false),
     [query, setQuery] = useState("");
   const p = snap.pack;
+  const equipment = normalizeEquipment(snap.adventure.equipment);
   const gestures = useSlotGestures({
     cursor: p.cursor,
-    getStack: (slot) => slot.area === "result" ? snap.craftResult
-      : slot.area === "slots" || slot.area === "grid" ? p[slot.area][slot.index] ?? null : null,
-    dispatch: (action) => inventoryGesture(game, action),
+    getStack: (slot) =>
+      slot.area === "result"
+        ? snap.craftResult
+        : slot.area === "slots" || slot.area === "grid"
+          ? (p[slot.area][slot.index] ?? null)
+          : null,
+    dispatch: (action) => {
+      if (
+        action.type === "click" &&
+        action.quick &&
+        (action.slot.area === "slots" || action.slot.area === "grid")
+      ) {
+        const stack = p[action.slot.area][action.slot.index];
+        if (stack && armorSlot(stack.id)) {
+          game.adventure.equipArmor(
+            stack.id,
+            { area: action.slot.area, index: action.slot.index },
+            stack,
+          );
+          return;
+        }
+      }
+      inventoryGesture(game, action);
+    },
+    onExternalDrop: (drop) => {
+      const target = document
+        .elementFromPoint(drop.x, drop.y)
+        ?.closest<HTMLButtonElement>("[data-armor-slot]");
+      if (!target) return false;
+      const slot = target.dataset.armorSlot as ArmorSlot;
+      if (!ARMOR_SLOTS.includes(slot) || !drop.stack || armorSlot(drop.stack.id) !== slot)
+        return true;
+      if (drop.heldCursor) game.adventure.armorSlot(slot);
+      else if (drop.from.area === "slots" || drop.from.area === "grid")
+        game.adventure.equipArmor(
+          drop.stack.id,
+          { area: drop.from.area, index: drop.from.index },
+          drop.source,
+        );
+      return true;
+    },
   });
   const slot = (area: Area, index: number) => {
     const s = p[area][index],
@@ -62,33 +108,42 @@ export default function SlotInventory({
         <div className="mc-character">
           <div className="mc-equipment">
             <span>Pancerz</span>
-            <button
-              className={"mc-slot armor-slot " + (snap.adventure.armor ? "equipped" : "")}
-              title={
-                snap.adventure.armor
-                  ? "Zdejmij napierśnik"
-                  : "Wybierz napierśnik w plecaku i kliknij tutaj"
-              }
-              onClick={() => {
-                const armor = p.cursor?.id;
-                if (armor === 121 || armor === 122) {
-                  game.adventure.equipArmor(armor);
-                  game.emit();
-                } else if (snap.adventure.armor) {
-                  game.adventure.equipArmor(snap.adventure.armor);
-                  game.emit();
+            {ARMOR_SLOTS.map((slot) => (
+              <button
+                key={slot}
+                data-armor-slot={slot}
+                className={"mc-slot armor-slot " + (equipment[slot] ? "equipped" : "")}
+                aria-label={
+                  ARMOR_LABELS[slot] +
+                  ": " +
+                  (equipment[slot] ? item(equipment[slot]).name : "puste pole")
                 }
-              }}
-            >
-              {snap.adventure.armor ? (
-                <Icon id={snap.adventure.armor} size={30} />
-              ) : (
-                <Shield size={27} />
-              )}
-            </button>
-            <small>{snap.adventure.armor ? "Założony" : "Brak"}</small>
+                title={
+                  ARMOR_LABELS[slot] +
+                  (equipment[slot]
+                    ? ": " + item(equipment[slot]).name + " — kliknij, aby zdjąć"
+                    : " — chwyć część pancerza i kliknij tutaj")
+                }
+                disabled={!!p.cursor && armorSlot(p.cursor.id) !== slot}
+                onClick={() => game.adventure.armorSlot(slot)}
+              >
+                {equipment[slot] ? (
+                  <Icon id={equipment[slot]} size={30} />
+                ) : (
+                  <span className="armor-slot-empty">
+                    <Shield size={20} />
+                    <small>{ARMOR_LABELS[slot]}</small>
+                  </span>
+                )}
+              </button>
+            ))}
+            <small>{snap.adventure.armorPoints ?? 0}/20</small>
           </div>
-          <InventoryAvatar heldId={snap.hotbar[snap.selected] ?? 0} />
+          <InventoryAvatar
+            heldId={snap.hotbar[snap.selected] ?? 0}
+            faceTexture={game.faceCamera?.texture}
+            equipment={equipment}
+          />
         </div>
         <div className="mc-crafting">
           <h3>
@@ -110,7 +165,14 @@ export default function SlotInventory({
                   ? "Wytwórz: " + item(snap.craftResult.id).name
                   : "Ułóż składniki według przepisu"
               }
-              aria-label={snap.craftResult ? "Wynik wytwarzania: " + item(snap.craftResult.id).name + " ×" + snap.craftResult.n : "Wynik wytwarzania: puste"}
+              aria-label={
+                snap.craftResult
+                  ? "Wynik wytwarzania: " +
+                    item(snap.craftResult.id).name +
+                    " ×" +
+                    snap.craftResult.n
+                  : "Wynik wytwarzania: puste"
+              }
               {...gestures.slotProps({ area: "result", index: 0 })}
             >
               {snap.craftResult && (
@@ -157,7 +219,8 @@ export default function SlotInventory({
       <div className="mc-footer">
         <p>
           Przeciągnij stos lub kliknij dwa pola · 2× LPM: zbierz takie same do stosu · PPM: podziel
-          / odłóż 1 · Shift + klik: szybkie przenoszenie. Trzymany stos: przeciągnij LPM — podziel równo, PPM — po 1.
+          / odłóż 1 · Shift + klik: szybkie przenoszenie. Trzymany stos: przeciągnij LPM — podziel
+          równo, PPM — po 1.
           <span className="inventory-touch-help">
             Na telefonie przytrzymaj chwilę stos i przeciągnij. Szybki ruch w pionie przewija panel.
           </span>

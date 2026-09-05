@@ -2,16 +2,14 @@
   "name": "minecraftgra",
   "version": "1.0.0",
   "private": true,
-  "engines": {
-    "node": ">=22.13.0"
-  },
+  "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build-standalone.mjs public/index.html && node scripts/build-server.mjs",
     "start": "node scripts/local-server.mjs",
     "check": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts && node tests/regression.cjs",
-    "lint": "oxlint lib server components/multiplayer-menu.tsx components/chest-inventory.tsx components/touch-controls.tsx app/page.tsx"
+    "lint": "oxlint lib server components/multiplayer-menu.tsx components/camera-settings.tsx components/voice-settings.tsx components/game-settings.tsx components/horror-status.tsx components/chest-inventory.tsx components/touch-controls.tsx app/page.tsx"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
@@ -54,5 +52,7 @@
     "typescript": "5.9.3",
     "vite": "8.0.13"
   },
-  "type": "module"
+  "engines": {
+    "node": ">=22.13.0"
+  }
 }

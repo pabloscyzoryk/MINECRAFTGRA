@@ -23,6 +23,15 @@ type Options = {
   getStack: (slot: SlotRef) => Stack | null;
   canPlace?: (slot: SlotRef, id: number) => boolean;
   dispatch: (gesture: InventoryGesture) => void;
+  /** Optional non-inventory targets, such as wearable armor slots. True consumes the release. */
+  onExternalDrop?: (drop: {
+    from: SlotRef;
+    source: Stack | null;
+    stack: Stack | null;
+    heldCursor: boolean;
+    x: number;
+    y: number;
+  }) => boolean;
 };
 type Position = { x: number; y: number; touch: boolean };
 type Press = {
@@ -197,7 +206,21 @@ export function useSlotGestures(options: Options) {
       advance(current, at);
       const to = targetAt(event.clientX, event.clientY);
       const releaseKind = slotReleaseKind(current.mode, current.slot, to);
-      if (current.mode === "drag" && current.paint) {
+      if (
+        current.mode === "drag" &&
+        !to &&
+        insidePanel(event.clientX, event.clientY) &&
+        latest.current.onExternalDrop?.({
+          from: current.slot,
+          source: current.source,
+          stack: current.stack,
+          heldCursor: current.heldCursor,
+          x: event.clientX,
+          y: event.clientY,
+        })
+      ) {
+        clicks.current.reset();
+      } else if (current.mode === "drag" && current.paint) {
         paintPath(current, current.previous, {
           x: event.clientX,
           y: event.clientY,

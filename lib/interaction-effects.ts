@@ -3,6 +3,7 @@ import { item, type Dimension } from "./blocks";
 import { hash } from "./world";
 import { cubeGeo, mat } from "./entities";
 import type { Game } from "./engine";
+export const SWING_DURATION = 0.23;
 export type HandSwingPose = { x: number; y: number; z: number; rx: number; rz: number };
 export function handSwing(progress: number) {
   progress = Math.max(0, Math.min(1, Number.isFinite(progress) ? progress : 1));

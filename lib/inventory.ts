@@ -14,7 +14,10 @@ export type GridRecipe = {
   furnace?: boolean;
 };
 export const maxStack = (id: number) =>
-  [101, 102, 103, 104, 105, 108, 115, 118, 121, 122, 123, 126, 127, 128, 129, 130].includes(id)
+  [
+    101, 102, 103, 104, 105, 108, 115, 118, 121, 122, 123, 126, 127, 128, 129, 130, 131, 132,
+  ].includes(id) ||
+  (id >= 141 && id <= 162)
     ? 1
     : id === 114
       ? 16
@@ -23,6 +26,129 @@ const wood = [8, 44, 51, 78, 86],
   logs = [5, 25, 43, 47, 49, 52, 76],
   planks = [8, 8, 44, 8, 51, 86, 78];
 export const GRID_RECIPES: GridRecipe[] = [
+  ...[
+    [140, 141, 142, 143, 144],
+    [133, 145, 146, 147, 148],
+    [110, 149, 121, 150, 151],
+    [111, 152, 122, 153, 154],
+  ].flatMap(([m, head, chest, legs, feet]): GridRecipe[] => [
+    {
+      name: "Hełm",
+      out: head,
+      n: 1,
+      pattern: [
+        [m, m, m],
+        [m, 0, m],
+      ],
+    },
+    {
+      name: "Napierśnik",
+      out: chest,
+      n: 1,
+      pattern: [
+        [m, 0, m],
+        [m, m, m],
+        [m, m, m],
+      ],
+    },
+    {
+      name: "Nogawice",
+      out: legs,
+      n: 1,
+      pattern: [
+        [m, m, m],
+        [m, 0, m],
+        [m, 0, m],
+      ],
+    },
+    {
+      name: "Buty",
+      out: feet,
+      n: 1,
+      pattern: [
+        [m, 0, m],
+        [m, 0, m],
+      ],
+    },
+  ]),
+  ...[
+    [133, 155, 156, 157, 158, 159],
+    [111, 103, 108, 160, 161, 162],
+  ].flatMap(([m, pick, sword, axe, shovel, hoe]): GridRecipe[] => [
+    {
+      name: "Kilof",
+      out: pick,
+      n: 1,
+      pattern: [
+        [m, m, m],
+        [0, 112, 0],
+        [0, 112, 0],
+      ],
+    },
+    { name: "Miecz", out: sword, n: 1, pattern: [[m], [m], [112]] },
+    {
+      name: "Siekiera",
+      out: axe,
+      n: 1,
+      pattern: [
+        [m, m],
+        [m, 112],
+        [0, 112],
+      ],
+    },
+    { name: "Łopata", out: shovel, n: 1, pattern: [[m], [112], [112]] },
+    {
+      name: "Motyka",
+      out: hoe,
+      n: 1,
+      pattern: [
+        [m, m],
+        [0, 112],
+        [0, 112],
+      ],
+    },
+  ]),
+  ...[
+    [133, 33],
+    [110, 94],
+    [109, 95],
+    [134, 96],
+    [135, 97],
+    [111, 34],
+    [136, 37],
+    [139, 99],
+  ].flatMap(([m, block]): GridRecipe[] => [
+    {
+      name: "Blok surowca",
+      out: block,
+      n: 1,
+      pattern: [
+        [m, m, m],
+        [m, m, m],
+        [m, m, m],
+      ],
+    },
+    { name: "Rozłóż blok", out: m, n: 9, pattern: [[block]] },
+  ]),
+  {
+    name: "Blok kwarcu",
+    out: 98,
+    n: 1,
+    pattern: [
+      [137, 137],
+      [137, 137],
+    ],
+  },
+  {
+    name: "Sztabka netherytu",
+    out: 139,
+    n: 1,
+    pattern: [
+      [138, 138, 133],
+      [138, 138, 133],
+      [133, 133, 0],
+    ],
+  },
   {
     name: "Tarcza",
     out: 126,
@@ -64,6 +190,15 @@ export const GRID_RECIPES: GridRecipe[] = [
     ],
   },
   { name: "Łopata", out: 130, n: 1, pattern: [[110], [112], [112]] },
+  {
+    name: "Nożyce",
+    out: 132,
+    n: 1,
+    pattern: [
+      [0, 110],
+      [110, 0],
+    ],
+  },
   ...logs.map((id, i) => ({
     name: "Deski",
     out: planks[i],
@@ -80,12 +215,12 @@ export const GRID_RECIPES: GridRecipe[] = [
       [-1, -1],
     ],
   },
-  ...[101, 102, 103].map((id, i) => ({
+  ...[101, 102, 131, 103].map((id, i) => ({
     name: "Kilof",
     out: id,
     n: 1,
     pattern: [
-      [[-1, 9, 111][i], [-1, 9, 111][i], [-1, 9, 111][i]],
+      [[-1, 9, 110, 111][i], [-1, 9, 110, 111][i], [-1, 9, 110, 111][i]],
       [0, 112, 0],
       [0, 112, 0],
     ],

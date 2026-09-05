@@ -13,6 +13,10 @@ export type FurnaceRecipe = { input: number; output: number; seconds: number };
 export const FURNACE_RECIPES: FurnaceRecipe[] = [
   { input: 21, output: 110, seconds: 10 },
   { input: 80, output: 120, seconds: 10 },
+  { input: 87, output: 133, seconds: 10 },
+  { input: 92, output: 138, seconds: 10 },
+  { input: 93, output: 133, seconds: 10 },
+  { input: 91, output: 137, seconds: 10 },
   { input: 4, output: 10, seconds: 10 },
   { input: 9, output: 3, seconds: 10 },
 ];

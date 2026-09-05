@@ -1,14 +1,25 @@
 import * as THREE from "three";
 import type { Game } from "./engine";
-import { Mob, cube } from "./entities";
+import { Mob, cube, mat } from "./entities";
 import { SkinModel, readSkin, defaultSkin } from "./skin-model";
 import { PROTOCOL, type PlayerWire, type SkinWire, type FrameWire, type Vec } from "./net-protocol";
 import { VoiceChat } from "./voice";
 import { weapon } from "./combat";
+import { SWING_DURATION } from "./interaction-effects";
+import { DRAGON_MAX_HEALTH } from "./dragon-balance";
+import { damageCauseLabel } from "./damage-causes";
+import { normalizeEquipment, type ArmorSlot } from "./armor";
 import type { InventoryGesture } from "./inventory-gestures";
+import type { Stack } from "./inventory";
 import { chestCounts, type ChestSlots } from "./chest-slots";
 import { restoreFurnace, type FurnaceState } from "./furnace";
 import { normalizeDifficulty, type Difficulty } from "./difficulty";
+import {
+  validFaceFrame,
+  FACE_FRAME_INTERVAL,
+  FACE_FRAME_TIMEOUT,
+  FACE_ROOM_FRAME_BUDGET,
+} from "./net-protocol";
 type Remote = {
   model: SkinModel;
   label: THREE.Sprite;
@@ -27,6 +38,8 @@ export class Multiplayer {
   id = "";
   clock = 90;
   horrorClock = 0;
+  huntClock = 0;
+  damageNoticeAt = -Infinity;
   difficulty: Difficulty;
   ping = 0;
   nick: string;
@@ -61,8 +74,19 @@ export class Multiplayer {
   furnaceRevisions = new Map<string, number>();
   furnaceOpenGeneration = 0;
   furnaceRefreshKey: string | null = null;
+  faceFrames = new Map<string, { frame: string; at: number }>();
+  faceLastSent = -Infinity;
   inventoryQueue: {
-    gesture: InventoryGesture | { type: "settle"; size: 2 | 3 };
+    gesture:
+      | InventoryGesture
+      | { type: "settle"; size: 2 | 3 }
+      | { type: "armor"; slot: ArmorSlot }
+      | {
+          type: "equipArmor";
+          id: number;
+          from?: { area: "slots" | "grid"; index: number };
+          expected?: Stack | null;
+        };
     chestKey: string | null;
     furnaceKey: string | null;
   }[] = [];
@@ -84,11 +108,13 @@ export class Multiplayer {
         localStorage.setItem("blockland.online.token", this.token);
       } catch {}
     }
-    this.voice = new VoiceChat(
-      (audio) => this.send({ type: "voice", audio }),
-      () => this.connected,
-      () => this.emit(),
-    );
+    this.voice =
+      game.voice ??
+      new VoiceChat(
+        (audio) => this.send({ type: "voice", audio }),
+        () => this.connected,
+        () => this.emit(),
+      );
   }
   subscribe = (fn: () => void) => {
     this.listeners.add(fn);
@@ -134,8 +160,14 @@ export class Multiplayer {
         this.emit();
       };
       this.socket.onclose = () => {
+        this.clearRemoteFaces();
         this.connected = false;
-        this.voice.blur();
+        if (!this.closed && (!this.game.net || this.game.net === this)) {
+          this.voice.blur();
+          this.game.horror?.clear();
+          this.game.horrorThreat = null;
+          this.game.emit();
+        }
         if (!this.closed && !this.fatal) {
           this.status = "Połączenie przerwane. Ponawianie…";
           this.reconnectTimer = setTimeout(() => this.open(), this.reconnectDelay);
@@ -167,7 +199,10 @@ export class Multiplayer {
       this.socket.send(JSON.stringify(data));
   }
   request(command: Record<string, unknown>, callback?: (data: any) => void) {
-    if (this.chestBusy && !["inventoryGesture", "settleInventory"].includes(String(command.type)))
+    if (
+      this.chestBusy &&
+      !["inventoryGesture", "settleInventory", "armor", "equipArmor"].includes(String(command.type))
+    )
       return "";
     if (!this.connected) {
       this.game.notify("Poczekaj na połączenie z serwerem.");
@@ -182,9 +217,55 @@ export class Multiplayer {
     return req;
   }
   receive(data: any) {
+    if (this.closed) return;
     const g = this.game;
-    if (data.type === "horrorReset") { g.horror?.clear(); return; }
-    if (data.type === "horror") { g.receiveHorror(data.event); return; }
+    if (data.type === "horrorReset") {
+      g.horror?.clear();
+      g.horrorThreat = null;
+      g.emit();
+      return;
+    }
+    if (data.type === "horrorHunt") {
+      if (Number.isFinite(data.clock)) this.huntClock = Math.max(0, data.clock);
+      const hunt = data.hunt;
+      g.horrorThreat =
+        g.difficulty === "horror" &&
+        hunt &&
+        hunt.dimension === g.world.dimension &&
+        Array.isArray(hunt.p) &&
+        hunt.p.length === 3 &&
+        hunt.p.every(Number.isFinite) &&
+        Number.isFinite(hunt.hp) &&
+        Number.isFinite(hunt.maxHp) &&
+        hunt.maxHp > 0 &&
+        hunt.hp >= 0 &&
+        hunt.hp <= hunt.maxHp &&
+        typeof hunt.id === "string" &&
+        Number.isFinite(hunt.yaw) &&
+        Number.isFinite(hunt.phaseAt) &&
+        Number.isFinite(hunt.phaseDuration) &&
+        hunt.phaseDuration >= 0 &&
+        [
+          "telegraph",
+          "stalk",
+          "lungeTell",
+          "lunge",
+          "vulnerable",
+          "caught",
+          "escaped",
+          "banished",
+        ].includes(hunt.phase) &&
+        Array.isArray(hunt.viewerIds) &&
+        hunt.viewerIds.includes(this.id)
+          ? structuredClone(hunt)
+          : null;
+      g.emit();
+      return;
+    }
+    if (data.type === "horror") {
+      g.receiveHorror(data.event);
+      return;
+    }
     if (data.type === "vitals") {
       if (typeof data.food === "number") g.food = Math.max(0, Math.min(20, data.food));
       if (typeof data.health === "number") g.health = Math.max(0, Math.min(20, data.health));
@@ -218,6 +299,9 @@ export class Multiplayer {
       return;
     }
     if (data.type === "welcome") {
+      g.horrorThreat = null;
+      this.clearRemoteFaces();
+      this.faceLastSent = -Infinity;
       this.furnaceOpenGeneration++;
       this.furnaceRefreshKey = g.pauseReason === "furnace" ? g.adventure.currentFurnace : null;
       this.furnaceRevisions.clear();
@@ -251,9 +335,10 @@ export class Multiplayer {
           inventory: s.inventory ?? {},
           pack: s.pack,
           clock: data.clock,
-          adventure: s.adventure,
+          adventure: { ...s.adventure, equipment: s.equipment ?? s.adventure?.equipment },
           crystals: data.crystals,
           dragon: data.dragon,
+          dragonMaxHealth: DRAGON_MAX_HEALTH,
           won: data.won,
           visited: s.visited ?? ["overworld"],
         });
@@ -274,21 +359,46 @@ export class Multiplayer {
         g.dimensionChanged();
         g.ensure(g.position.x, g.position.z, true);
       }
-      if (data.profile?.pack && this.initialized) {
-        g.pack.restore(data.profile.pack);
+      if (this.initialized) {
+        g.pack.restore(data.profile?.pack ?? {});
+        if (!data.profile?.pack) g.pack.reconcile(data.profile?.inventory ?? {});
         g.inventory = g.pack.counts();
         g.hotbar = g.pack.slots.slice(0, 9).map((s) => s?.id ?? 0);
+        g.heldId = -1;
       }
+      g.adventure.data.equipment = normalizeEquipment(
+        data.profile?.equipment ?? data.profile?.adventure?.equipment,
+      );
+      g.adventure.data.armor = g.adventure.data.equipment.chest;
       g.health = data.health;
       g.setDifficulty(this.difficulty, true);
-      if (g.health <= 0) g.pause("death");
+      if (g.health <= 0) {
+        this.inventoryQueue = [];
+        g.pause("death");
+      }
       this.sendInput();
+      this.sendFaceFrame(g.faceCamera?.latestFrame ?? null);
       for (const p of this.pending.values()) {
         p.at = performance.now();
         this.send({ type: "command", command: p.command });
       }
       this.refreshFurnace();
       this.emit();
+      return;
+    }
+    if (data.type === "faceFrame") {
+      if (
+        this.closed ||
+        typeof data.sender !== "string" ||
+        data.sender.length > 64 ||
+        data.sender === this.id ||
+        !validFaceFrame(data.frame)
+      )
+        return;
+      this.faceFrames ??= new Map();
+      if (data.frame === null) this.faceFrames.delete(data.sender);
+      else this.faceFrames.set(data.sender, { frame: data.frame, at: performance.now() });
+      this.remotes.get(data.sender)?.model.setFaceFrame(data.frame);
       return;
     }
     if (data.type === "appearance") {
@@ -349,6 +459,10 @@ export class Multiplayer {
         g.heldId = -1;
         this.inventoryRevision = Number(data.inventoryRevision) || 0;
       }
+      if (data.equipment && currentPack) {
+        g.adventure.data.equipment = normalizeEquipment(data.equipment);
+        g.adventure.data.armor = g.adventure.data.equipment.chest;
+      }
       if (data.ok) {
         if (!data.pack && currentPack) {
           for (const [id, n] of data.cost ?? [])
@@ -370,7 +484,8 @@ export class Multiplayer {
         this.applyChest(data.chest.key, data.chest.slots ?? [], data.chest.revision);
         g.emit();
       }
-      if (data.furnace) this.applyFurnace(data.furnace.key, data.furnace.state, data.furnace.revision);
+      if (data.furnace)
+        this.applyFurnace(data.furnace.key, data.furnace.state, data.furnace.revision);
       pending?.callback?.(data);
       this.refreshFurnace();
       return;
@@ -391,8 +506,19 @@ export class Multiplayer {
       g.health = data.health;
       g.damageFlash = 0.5;
       g.audio.play("hurt");
+      const cause = damageCauseLabel(data.reason),
+        now = performance.now();
+      if (g.health > 0 && cause && now - (this.damageNoticeAt ?? -Infinity) >= 3000) {
+        this.damageNoticeAt = now;
+        g.notify(cause);
+      }
       if (Array.isArray(data.knockback)) g.velocity.add(new THREE.Vector3(...data.knockback));
       if (data.health <= 0) {
+        this.inventoryQueue = [];
+        g.horror?.clear();
+        g.horrorThreat = null;
+        g.adventure.data.equipment = normalizeEquipment(null);
+        g.adventure.data.armor = 0;
         g.pack.reset();
         g.inventory = {};
         g.hotbar = Array(9).fill(0);
@@ -436,7 +562,8 @@ export class Multiplayer {
       this.game.setDifficulty(this.difficulty, true);
       this.emit();
     });
-    if (!req && this.chestBusy) this.game.notify("Poczekaj na zakończenie przenoszenia przedmiotów.");
+    if (!req && this.chestBusy)
+      this.game.notify("Poczekaj na zakończenie przenoszenia przedmiotów.");
     return req;
   }
   sendInput() {
@@ -453,7 +580,7 @@ export class Multiplayer {
       moving: g.active && Math.abs(g.velocity.x) + Math.abs(g.velocity.z) > 0.2,
       crouch: g.crouching,
       swing: g.swingTime > 0,
-      swingProgress: g.swingTime > 0 ? 1 - g.swingTime / 0.36 : -1,
+      swingProgress: g.swingTime > 0 ? 1 - g.swingTime / SWING_DURATION : -1,
       held: g.hotbar[g.selected] ?? 0,
       blocking: g.rightDown,
       grounded: g.grounded,
@@ -483,10 +610,16 @@ export class Multiplayer {
   }
   tick(dt: number) {
     if (this.closed) return;
+    for (const [id, face] of this.faceFrames ?? [])
+      if (performance.now() - face.at > FACE_FRAME_TIMEOUT) {
+        this.faceFrames.delete(id);
+        this.remotes.get(id)?.model.setFaceFrame(null);
+      }
     this.refreshFurnace();
     this.flushInventory();
     this.clock += dt;
     this.horrorClock += dt;
+    this.huntClock = (this.huntClock ?? 0) + dt;
     this.networkClock += dt;
     this.profileClock += dt;
     this.uiClock += dt;
@@ -510,6 +643,7 @@ export class Multiplayer {
     }
     const g = this.game;
     for (const r of this.remotes.values()) {
+      r.model.setEquipment?.(r.wire.equipment);
       r.model.group.visible = r.wire.dimension === g.world.dimension && (r.wire.health ?? 20) > 0;
       const dist = r.model.group.position.distanceTo(r.position);
       if (dist > 10) r.model.group.position.copy(r.position);
@@ -525,7 +659,7 @@ export class Multiplayer {
         this.clock,
         r.wire.moving,
         r.wire.crouch,
-        r.swingTime ? 1 - r.swingTime / 0.36 : -1,
+        r.swingTime ? 1 - r.swingTime / SWING_DURATION : -1,
       );
       r.model.head.rotation.x = -r.wire.pitch;
       r.label.visible = r.model.group.visible;
@@ -562,6 +696,7 @@ export class Multiplayer {
         r.label.material.map?.dispose();
         r.label.material.dispose();
         this.remotes.delete(id);
+        this.faceFrames.delete(id);
       }
     for (const p of this.players) {
       if (p.id === this.id) continue;
@@ -589,6 +724,9 @@ export class Multiplayer {
         this.game.scene.add(model.group);
         r = { model, label, wire: p, position: new THREE.Vector3(...p.p), skinKey: "" };
         this.remotes.set(p.id, r);
+        const face = this.faceFrames.get(p.id);
+        if (face && performance.now() - face.at <= FACE_FRAME_TIMEOUT)
+          model.setFaceFrame(face.frame);
         const skin = this.appearances.get(p.id)?.skin;
         if (skin) this.loadRemoteSkin(r, skin);
       }
@@ -597,7 +735,7 @@ export class Multiplayer {
         const progress = p.swingProgress ?? 0;
         const previous = r.wire.swingProgress ?? 0;
         if (!r.wire.swing || !r.swingTime || progress + 0.15 < previous)
-          r.swingTime = 0.36 * (1 - progress);
+          r.swingTime = SWING_DURATION * (1 - progress);
       }
       r.wire = p;
       r.position.fromArray(p.p);
@@ -690,6 +828,13 @@ export class Multiplayer {
     }
   }
   syncShots(shots: any[]) {
+    shots = shots.filter(
+      (s) =>
+        s.dimension === this.game.world.dimension &&
+        Array.isArray(s.p) &&
+        s.p.length === 3 &&
+        s.p.every(Number.isFinite),
+    );
     while (this.shotMeshes.length > shots.length) this.shotMeshes.pop()!.removeFromParent();
     shots.forEach((s, i) => {
       this.shotMeshes[i] ??= cube(
@@ -704,6 +849,7 @@ export class Multiplayer {
         !!s.enemy,
       );
       this.shotMeshes[i].position.fromArray(s.p);
+      this.shotMeshes[i].material = mat(s.enemy ? "#dfb0ff" : "#e6d1a1", !!s.enemy);
     });
   }
   mine(t: { x: number; y: number; z: number; id: number }) {
@@ -753,6 +899,17 @@ export class Multiplayer {
         }
       }
     };
+    const hunt = g.horrorThreat;
+    if (
+      g.difficulty === "horror" &&
+      hunt &&
+      hunt.dimension === g.world.dimension &&
+      !["caught", "escaped", "banished"].includes(hunt.phase)
+    )
+      test(new THREE.Vector3(...hunt.p).add(new THREE.Vector3(0, 1.9, 0)), 1.1, {
+        type: "huntHit",
+        target: hunt.id,
+      });
     for (const [id, r] of this.remotes)
       if (r.wire.dimension === g.world.dimension)
         test(r.model.group.position.clone().add(new THREE.Vector3(0, 1, 0)), 0.68, {
@@ -771,7 +928,7 @@ export class Multiplayer {
     if (command) {
       this.request(command);
       g.attackCooldown = stats.cooldown;
-      g.swingTime = 0.36;
+      g.swingTime = SWING_DURATION;
       return true;
     }
     return false;
@@ -806,13 +963,28 @@ export class Multiplayer {
       lockGeneration = g.lockGeneration,
       generation = ++this.furnaceOpenGeneration;
     const req = this.request({ type: "openFurnace", x, y, z }, (data) => {
-      if (this.closed || generation !== this.furnaceOpenGeneration || g.health <= 0 ||
-        !g.started || g.preview || g.world.dimension !== dimension ||
-        g.lockGeneration !== lockGeneration) return;
-      if (refresh ? g.pauseReason !== "furnace" || g.adventure.currentFurnace !== key
-        : !g.active || g.pauseReason !== "") return;
-      if (!data.ok || data.furnace?.key !== key || !g.adventure.data.furnaces[key] ||
-        g.world.get(x, y, z) !== 29) {
+      if (
+        this.closed ||
+        generation !== this.furnaceOpenGeneration ||
+        g.health <= 0 ||
+        !g.started ||
+        g.preview ||
+        g.world.dimension !== dimension ||
+        g.lockGeneration !== lockGeneration
+      )
+        return;
+      if (
+        refresh
+          ? g.pauseReason !== "furnace" || g.adventure.currentFurnace !== key
+          : !g.active || g.pauseReason !== ""
+      )
+        return;
+      if (
+        !data.ok ||
+        data.furnace?.key !== key ||
+        !g.adventure.data.furnaces[key] ||
+        g.world.get(x, y, z) !== 29
+      ) {
         if (refresh) {
           g.adventure.currentFurnace = "";
           g.resume();
@@ -823,20 +995,28 @@ export class Multiplayer {
       if (refresh) g.emit();
       else g.pause("furnace");
     });
-    g.actionCooldown = .3;
+    g.actionCooldown = 0.3;
     return req;
   }
   refreshFurnace() {
     const key = this.furnaceRefreshKey;
     if (!key) return;
     const g = this.game;
-    if (this.closed || g.health <= 0 || g.pauseReason !== "furnace" ||
-      g.adventure.currentFurnace !== key || !key.startsWith(g.world.dimension + ":")) {
+    if (
+      this.closed ||
+      g.health <= 0 ||
+      g.pauseReason !== "furnace" ||
+      g.adventure.currentFurnace !== key ||
+      !key.startsWith(g.world.dimension + ":")
+    ) {
       this.furnaceRefreshKey = null;
       return;
     }
     if (!this.connected || !this.initialized || this.chestBusy || this.pending.size) return;
-    const [x, y, z] = key.slice(g.world.dimension.length + 1).split(",").map(Number);
+    const [x, y, z] = key
+      .slice(g.world.dimension.length + 1)
+      .split(",")
+      .map(Number);
     this.furnaceRefreshKey = null;
     if (!this.openFurnace(x, y, z, true)) this.furnaceRefreshKey = key;
   }
@@ -877,9 +1057,11 @@ export class Multiplayer {
       !g.pack.cursor &&
       !Object.hasOwn(captured, "expected")
     )
-      captured.expected = structuredClone(captured.from.area === "furnace"
-        ? g.adventure.furnaceState()?.slots[captured.from.index] ?? null
-        : g.adventure.chestSlots()[captured.from.index]);
+      captured.expected = structuredClone(
+        captured.from.area === "furnace"
+          ? (g.adventure.furnaceState()?.slots[captured.from.index] ?? null)
+          : g.adventure.chestSlots()[captured.from.index],
+      );
     this.inventoryQueue.push({
       gesture: captured,
       chestKey: chestOpen === true ? g.adventure.currentChest : null,
@@ -889,7 +1071,44 @@ export class Multiplayer {
   }
   settleInventory(size: 2 | 3 = 2) {
     if (this.closed || this.fatal) return;
-    this.inventoryQueue.push({ gesture: { type: "settle", size }, chestKey: null, furnaceKey: null });
+    this.inventoryQueue.push({
+      gesture: { type: "settle", size },
+      chestKey: null,
+      furnaceKey: null,
+    });
+    this.flushInventory();
+  }
+  armorSlot(slot: ArmorSlot) {
+    if (this.closed || this.fatal || this.game.health <= 0) return;
+    this.inventoryQueue.push({
+      gesture: { type: "armor", slot },
+      chestKey: null,
+      furnaceKey: null,
+    });
+    this.flushInventory();
+  }
+  equipArmor(
+    id: number,
+    from?: { area: "slots" | "grid"; index: number },
+    expected?: Stack | null,
+  ) {
+    if (this.closed || this.fatal || this.game.health <= 0) return;
+    this.inventoryQueue.push({
+      gesture: {
+        type: "equipArmor",
+        id,
+        ...(from
+          ? {
+              from: { ...from },
+              expected: structuredClone(
+                expected === undefined ? (this.game.pack[from.area][from.index] ?? null) : expected,
+              ),
+            }
+          : {}),
+      },
+      chestKey: null,
+      furnaceKey: null,
+    });
     this.flushInventory();
   }
   flushInventory() {
@@ -897,6 +1116,7 @@ export class Multiplayer {
       this.closed ||
       !this.connected ||
       !this.initialized ||
+      this.game.health <= 0 ||
       this.furnaceRefreshKey ||
       this.chestBusy ||
       this.pending.size ||
@@ -906,15 +1126,36 @@ export class Multiplayer {
     const job = this.inventoryQueue.shift()!;
     this.chestBusy = true;
     const command =
-      job.gesture.type === "settle"
-        ? { type: "settleInventory", size: job.gesture.size, baseRevision: this.inventoryRevision }
-        : {
-            type: "inventoryGesture",
-            gesture: job.gesture,
-            chestKey: job.chestKey,
-            furnaceKey: job.furnaceKey,
+      job.gesture.type === "armor"
+        ? {
+            type: "armor",
+            slot: job.gesture.slot,
             baseRevision: this.inventoryRevision,
-          };
+            expectedCursor: structuredClone(this.game.pack.cursor),
+            expectedEquipped: this.game.adventure.data.equipment[job.gesture.slot],
+          }
+        : job.gesture.type === "equipArmor"
+          ? {
+              type: "equipArmor",
+              id: job.gesture.id,
+              baseRevision: this.inventoryRevision,
+              ...(job.gesture.from
+                ? { from: job.gesture.from, expected: job.gesture.expected }
+                : {}),
+            }
+          : job.gesture.type === "settle"
+            ? {
+                type: "settleInventory",
+                size: job.gesture.size,
+                baseRevision: this.inventoryRevision,
+              }
+            : {
+                type: "inventoryGesture",
+                gesture: job.gesture,
+                chestKey: job.chestKey,
+                furnaceKey: job.furnaceKey,
+                baseRevision: this.inventoryRevision,
+              };
     const req = this.request(command, () => {
       this.chestBusy = false;
       this.game.emit();
@@ -930,16 +1171,44 @@ export class Multiplayer {
     const value = text.trim();
     if (value) this.send({ type: "chat", text: value.slice(0, 240) });
   }
+  sendFaceFrame(frame: string | null) {
+    if (this.closed || !this.connected || !this.initialized || !validFaceFrame(frame)) return;
+    // Camera images are replaceable. Never enqueue another image behind pending gameplay traffic.
+    if (frame !== null && (this.socket?.bufferedAmount ?? 0) > 32000) return;
+    const now = performance.now();
+    const interval = Math.max(
+      FACE_FRAME_INTERVAL * 1000,
+      ((this.players?.length ?? 1) * 1000) / FACE_ROOM_FRAME_BUDGET,
+    );
+    if (frame !== null && now - (this.faceLastSent ?? -Infinity) + 1 < interval) return;
+    if (frame !== null) this.faceLastSent = now;
+    this.send({ type: "faceFrame", frame });
+  }
+  clearRemoteFaces() {
+    this.faceFrames?.clear();
+    for (const remote of this.remotes?.values() ?? []) remote.model.setFaceFrame(null);
+  }
   close() {
-    this.game.horror?.clear();
     if (this.closed) return;
+    const ownsSession = this.game.net === this || this.game.net === undefined;
+    if (ownsSession) {
+      this.game.horror?.clear();
+      this.game.horrorThreat = null;
+    }
+    this.sendFaceFrame(null);
+    this.clearRemoteFaces();
     this.sendProfile();
     this.closed = true;
     this.inventoryQueue = [];
     this.connected = false;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     if (this.joinTimer) clearTimeout(this.joinTimer);
-    this.voice.close();
+    if (this.game.voice === this.voice) {
+      if (ownsSession) {
+        this.voice.disable();
+        this.voice.clearRemote();
+      }
+    } else this.voice.close();
     this.socket?.close(1000);
     for (const r of this.remotes.values()) {
       r.model.group.removeFromParent();

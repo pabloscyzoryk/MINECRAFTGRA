@@ -110,9 +110,15 @@ export class World {
           else if (y > h)
             id = this.dimension === "overworld" ? 7 : this.dimension === "nether" ? 15 : 0;
           else if (this.dimension === "end") id = 17;
-          else if (this.dimension === "nether")
+          else if (this.dimension === "nether") {
             id = y === h && hash(wx, wz, this.seed) > 0.91 ? 15 : 14;
-          else if (y === h) id = h < WATER && biome.id !== "swamp" ? 4 : biome.surface;
+            if (id === 14 && y < h - 1) {
+              const ore = hash(wx + y * 57, wz - y * 91, this.seed + 733);
+              if (y < 12 && ore > 0.9985) id = 92;
+              else if (ore > 0.965) id = 91;
+              else if (ore > 0.944) id = 93;
+            }
+          } else if (y === h) id = h < WATER && biome.id !== "swamp" ? 4 : biome.surface;
           else if (y > h - 4)
             id =
               biome.id === "desert"
@@ -129,6 +135,10 @@ export class World {
             else if (r > 0.947) id = 21;
             else if (r > 0.937) id = 80;
             else if (r > 0.929 && y < 11) id = 22;
+            else if (r > 0.916 && r <= 0.929 && (y < 16 || biome.id === "badlands")) id = 87;
+            else if (r > 0.902 && r <= 0.916 && y < 12) id = 88;
+            else if (r > 0.894 && r <= 0.902 && y < 20) id = 89;
+            else if (r > 0.89 && r <= 0.894 && y > 6) id = 90;
             if (
               y > 2 &&
               y < h - 4 &&
@@ -316,10 +326,9 @@ export class World {
       }
   }
   ruinLocation() {
-    const angle = hash(this.seed, 9, 331) * Math.PI * 2,
-      r = 210 + Math.floor(hash(this.seed, 7, 813) * 110);
-    const x = Math.round(Math.cos(angle) * r),
-      z = Math.round(Math.sin(angle) * r);
+    // Beside the starting village, clear of houses, crops and the End gateway.
+    const x = -18,
+      z = 12;
     return { x, z, y: this.height(x, z) + 1 };
   }
   structures(c: Chunk) {
@@ -464,6 +473,46 @@ export class World {
       level = this.waterLevels[key] ?? 0;
     const height = this.get(x, iy + 1, z) === 7 || level === 8 ? 1 : 0.88 - level * 0.095;
     return y - iy < height;
+  }
+  /** All current lava blocks are sources: water touching their top or sides forms obsidian. */
+  coolLava(x: number, y: number, z: number) {
+    if (this.get(x, y, z) !== 15) return false;
+    for (const [dx, dy, dz] of [
+      [0, 1, 0],
+      [1, 0, 0],
+      [-1, 0, 0],
+      [0, 0, 1],
+      [0, 0, -1],
+    ])
+      if (this.get(x + dx, y + dy, z + dz) === 7) {
+        this.set(x, y, z, 12);
+        return true;
+      }
+    return false;
+  }
+  /** A bucket aimed directly at lava pours onto its exposed surface instead of deleting the lava. */
+  pourWater(x: number, y: number, z: number) {
+    if (
+      ![x, y, z].every(Number.isInteger) ||
+      y < 1 ||
+      y >= HEIGHT - 1 ||
+      this.dimension === "nether"
+    )
+      return false;
+    while (this.get(x, y, z) === 15 && y < HEIGHT - 1) y++;
+    const existing = this.get(x, y, z);
+    if (y >= HEIGHT - 1 || (existing !== 0 && existing !== 7 && !BLOCKS[existing]?.plant))
+      return false;
+    this.set(x, y, z, 7);
+    for (const [dx, dy, dz] of [
+      [0, -1, 0],
+      [1, 0, 0],
+      [-1, 0, 0],
+      [0, 0, 1],
+      [0, 0, -1],
+    ])
+      this.coolLava(x + dx, y + dy, z + dz);
+    return true;
   }
   solid(x: number, y: number, z: number) {
     return !!BLOCKS[this.get(x, y, z)]?.solid;

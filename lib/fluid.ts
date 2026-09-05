@@ -48,6 +48,11 @@ export class FluidSystem {
       id = w.get(x, y, z),
       level = this.level(x, y, z);
     if (id !== 0 && id !== 7 && id !== 15 && !BLOCKS[id]?.plant) return;
+    if (id === 15) {
+      // Use the same contact rule whichever queued cell updates first.
+      w.coolLava(x, y, z);
+      return;
+    }
     if (id === 7) {
       for (const [dx, dy, dz] of [
         [1, 0, 0],
@@ -56,7 +61,7 @@ export class FluidSystem {
         [0, 0, -1],
         [0, -1, 0],
       ])
-        if (w.get(x + dx, y + dy, z + dz) === 15) w.set(x + dx, y + dy, z + dz, 12);
+        w.coolLava(x + dx, y + dy, z + dz);
       if (level === 0) return;
     }
     let desired = -1;
@@ -78,10 +83,6 @@ export class FluidSystem {
         if (candidate <= 7 && (desired < 0 || candidate < desired)) desired = candidate;
       }
       if (sources >= 2 && w.solid(x, y - 1, z)) desired = 0;
-    }
-    if (id === 15) {
-      if (desired >= 0) w.set(x, y, z, 3);
-      return;
     }
     if (level === desired) return;
     const stateKey = this.key(x, y, z);

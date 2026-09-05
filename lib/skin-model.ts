@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { HeldItemModel, type HeldTextureFactory } from "./held-item";
 import type { HandSwingPose } from "./interaction-effects";
+import { validFaceFrame } from "./net-protocol";
+import { ARMOR_COLORS, ARMOR_SLOTS, armorInfo, normalizeEquipment, type Equipment } from "./armor";
 export type Face = "front" | "back" | "left" | "right" | "top" | "bottom";
 export type Part = "head" | "body" | "armR" | "armL" | "legR" | "legL" | "cape";
 export const PART_NAMES: Record<Part, string> = {
@@ -242,6 +244,19 @@ export class SkinModel {
   joints: Record<string, THREE.Group> = {};
   grip = new THREE.Group();
   heldItem = new HeldItemModel();
+  private armorKey = "";
+  private armorMeshes: THREE.Mesh[] = [];
+  private armorMaterials: THREE.MeshStandardMaterial[] = [];
+  faceMaterial = new THREE.MeshStandardMaterial({
+    roughness: 1,
+    transparent: true,
+    alphaTest: 0.01,
+  });
+  faceOverlay = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.5), this.faceMaterial);
+  private faceOwnedTexture: THREE.Texture | null = null;
+  private faceImage: HTMLImageElement | null = null;
+  private faceGeneration = 0;
+  private disposed = false;
   constructor(public data: SkinData) {
     this.texture = new THREE.CanvasTexture(data.skin);
     this.texture.magFilter = THREE.NearestFilter;
@@ -290,6 +305,10 @@ export class SkinModel {
         this.parts.set(part + layer, mesh);
       }
     }
+    this.faceOverlay.name = "live-camera-face";
+    this.faceOverlay.position.set(0, 4 / 16, 8.5 / 32 + 0.002);
+    this.faceOverlay.visible = false;
+    this.head.add(this.faceOverlay);
     this.capePivot.position.set(0, 23 / 16, -0.17);
     const cape = new THREE.Mesh(boxGeometry("cape", 0), this.capeMaterial);
     cape.position.set(0, -0.5, -0.015);
@@ -347,11 +366,129 @@ export class SkinModel {
   setHeldItem(id: number) {
     this.heldItem.set(id);
   }
+  /** Armor attaches to animated joints; an open-face helmet keeps skins and live faces visible. */
+  setEquipment(value?: Equipment | null) {
+    if (this.disposed) return;
+    const equipment = normalizeEquipment(value),
+      key = ARMOR_SLOTS.map((slot) => equipment[slot]).join(":");
+    if (this.armorKey === key) return;
+    this.clearEquipment();
+    this.armorKey = key;
+    for (const slot of ARMOR_SLOTS) {
+      const info = armorInfo(equipment[slot]);
+      if (!info) continue;
+      const material = new THREE.MeshStandardMaterial({
+        color: ARMOR_COLORS[info.material],
+        roughness: info.material === "leather" ? 0.9 : 0.42,
+        metalness: info.material === "leather" ? 0 : 0.38,
+      });
+      this.armorMaterials.push(material);
+      const plate = (
+        joint: THREE.Group,
+        x: number,
+        y: number,
+        z: number,
+        w: number,
+        h: number,
+        d: number,
+      ) => {
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+        mesh.name = "armor-" + slot;
+        mesh.position.set(x, y, z);
+        mesh.castShadow = mesh.receiveShadow = true;
+        joint.add(mesh);
+        this.armorMeshes.push(mesh);
+      };
+      if (slot === "head") {
+        plate(this.head, 0, 0.53, 0, 0.59, 0.075, 0.59);
+        plate(this.head, 0, 0.27, -0.278, 0.59, 0.46, 0.045);
+        for (const side of [-1, 1]) plate(this.head, side * 0.279, 0.27, 0, 0.045, 0.46, 0.56);
+        plate(this.head, 0, 0.473, 0.281, 0.59, 0.075, 0.045);
+      } else if (slot === "chest") {
+        plate(this.joints.body, 0, 0, 0, 0.56, 0.78, 0.32);
+        for (const arm of [this.joints.armR, this.joints.armL])
+          plate(arm, 0, -0.06, 0, 0.3, 0.26, 0.31);
+      } else if (slot === "legs") {
+        plate(this.joints.body, 0, -0.34, 0, 0.555, 0.13, 0.315);
+        for (const leg of [this.joints.legR, this.joints.legL])
+          plate(leg, 0, -0.255, 0, 0.284, 0.54, 0.284);
+      } else {
+        for (const leg of [this.joints.legR, this.joints.legL])
+          plate(leg, 0, -0.645, 0.025, 0.31, 0.24, 0.34);
+      }
+    }
+  }
+  private clearEquipment() {
+    for (const mesh of this.armorMeshes) {
+      mesh.removeFromParent();
+      mesh.geometry.dispose();
+    }
+    for (const material of this.armorMaterials) material.dispose();
+    this.armorMeshes = [];
+    this.armorMaterials = [];
+  }
+  /** The caller owns local camera textures; model disposal must not stop another preview's texture. */
+  setFaceTexture(texture: THREE.Texture | null) {
+    if (
+      this.disposed ||
+      (this.faceMaterial.map === texture && !this.faceOwnedTexture && !this.faceImage)
+    )
+      return;
+    this.faceGeneration++;
+    if (this.faceImage) {
+      this.faceImage.src = "";
+      this.faceImage = null;
+    }
+    this.faceOwnedTexture?.dispose();
+    this.faceOwnedTexture = null;
+    this.faceMaterial.map = texture;
+    this.faceMaterial.needsUpdate = true;
+    this.faceOverlay.visible = !!texture;
+  }
+  setFaceFrame(frame: string | null) {
+    if (this.disposed) return;
+    if (!frame || !validFaceFrame(frame) || typeof Image === "undefined") {
+      this.setFaceTexture(null);
+      return;
+    }
+    const generation = ++this.faceGeneration;
+    if (this.faceImage) this.faceImage.src = "";
+    const image = new Image();
+    this.faceImage = image;
+    image.onload = () => {
+      if (this.disposed || generation !== this.faceGeneration) return;
+      this.faceImage = null;
+      if (image.width > 1024 || image.height > 1024 || image.width < 16 || image.height < 16) {
+        this.setFaceTexture(null);
+        return;
+      }
+      const texture = new THREE.Texture(image);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.minFilter = texture.magFilter = THREE.LinearFilter;
+      texture.generateMipmaps = false;
+      texture.needsUpdate = true;
+      this.faceOwnedTexture?.dispose();
+      this.faceOwnedTexture = texture;
+      this.faceMaterial.map = texture;
+      this.faceMaterial.needsUpdate = true;
+      this.faceOverlay.visible = true;
+    };
+    image.onerror = () => {
+      if (generation === this.faceGeneration) this.setFaceTexture(null);
+    };
+    image.src = frame;
+  }
   createFirstPersonArm(textureFactory?: HeldTextureFactory) {
     return new FirstPersonArm(this.material, textureFactory);
   }
   dispose() {
+    if (this.disposed) return;
+    this.setFaceTexture(null);
+    this.disposed = true;
+    this.faceOverlay.geometry.dispose();
+    this.faceMaterial.dispose();
     this.heldItem.dispose();
+    this.clearEquipment();
     this.parts.forEach((m) => m.geometry.dispose());
     this.material.dispose();
     this.capeMaterial.dispose();

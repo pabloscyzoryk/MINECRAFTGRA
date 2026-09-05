@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import * as THREE from "three";
 import { Adventure } from "../lib/adventure";
 import { createFurnace } from "../lib/furnace";
+import { InventoryPack } from "../lib/inventory";
 import type { Game } from "../lib/engine";
 
 test("A local explosion removes furnace contents once before a replacement can inherit them", () => {
@@ -30,6 +31,7 @@ test("Local furnace progresses while its panel is open and preserves progress in
   let emitted = 0;
   const game = {
     position: new THREE.Vector3(0, 20, 0), world: { dimension: "overworld", get: () => 29 },
+    pack: new InventoryPack(), inventory: {},
     active: false, pauseReason: "furnace", emit: () => emitted++,
   } as unknown as Game;
   const a = new Adventure(game), key = "overworld:0,20,0";

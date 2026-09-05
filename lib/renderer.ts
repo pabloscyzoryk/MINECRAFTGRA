@@ -127,10 +127,42 @@ export function createAtlas() {
       for (let y = 0; y < 32; y += 8)
         for (let x = 0; x < 32; x += 9) ctx.strokeRect(ox + x + (y % 16 ? 3 : 0), oy + y, 9, 8);
     }
-    if ([20, 21, 22].includes(i)) {
-      ctx.fillStyle = i === 20 ? "#353538" : i === 21 ? "#d0af96" : "#79f1e1";
-      for (let p = 0; p < 8; p++)
-        ctx.fillRect(ox + hash(p, i) * 27, oy + hash(p + 19, i) * 27, 4, 3);
+    if ([20, 21, 22, 80, 87, 88, 89, 90, 91, 93].includes(i)) {
+      const oreColors: Record<number, string> = {
+        20: "#353538",
+        21: "#d0af96",
+        22: "#79f1e1",
+        80: "#da9876",
+        87: "#efc747",
+        88: "#eb4a48",
+        89: "#3e68d2",
+        90: "#5ce19e",
+        91: "#f0dfd1",
+        93: "#e4b747",
+      };
+      for (let p = 0; p < 8; p++) {
+        const px = ox + Math.floor(hash(p, i) * 25) + 2,
+          py = oy + Math.floor(hash(p + 19, i) * 25) + 2;
+        ctx.fillStyle = "#00000066";
+        ctx.fillRect(px - 1, py - 1, 6, 5);
+        ctx.fillStyle = oreColors[i];
+        ctx.fillRect(px, py, 4, 3);
+        ctx.fillStyle = "#ffffff65";
+        ctx.fillRect(px, py, 2, 1);
+      }
+    }
+    if (i === 92) {
+      ctx.strokeStyle = "#bea18a";
+      ctx.lineWidth = 2;
+      for (let p = 3; p < 16; p += 5) ctx.strokeRect(ox + p, oy + p, 32 - p * 2, 32 - p * 2);
+    }
+    if ([33, 34, 37, 81, 94, 95, 96, 97, 98, 99].includes(i)) {
+      ctx.strokeStyle = "#00000044";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(ox + 1, oy + 1, 30, 30);
+      ctx.fillStyle = "#ffffff35";
+      ctx.fillRect(ox + 3, oy + 3, 26, 2);
+      ctx.fillRect(ox + 3, oy + 5, 2, 22);
     }
     if (i === 23) {
       ctx.fillStyle = "#e5d8bd";
@@ -335,6 +367,8 @@ export class WorldRenderer {
   time = 0;
   preview = true;
   radius = 4;
+  private offsetRadius = -1;
+  private chunkOffsets: [number, number][] = [];
   onFrame?: (dt: number) => void;
   canvas: HTMLCanvasElement;
   renderScene?: () => void;
@@ -448,14 +482,19 @@ export class WorldRenderer {
   };
   ensure(x: number, z: number, initial = false) {
     const cx = Math.floor(x / 16),
-      cz = Math.floor(z / 16),
-      coords: [number, number][] = [];
-    for (let dx = -this.radius; dx <= this.radius; dx++)
-      for (let dz = -this.radius; dz <= this.radius; dz++)
-        if (dx * dx + dz * dz <= (this.radius + 0.3) ** 2) coords.push([cx + dx, cz + dz]);
-    coords.sort((a, b) => Math.hypot(a[0] - cx, a[1] - cz) - Math.hypot(b[0] - cx, b[1] - cz));
+      cz = Math.floor(z / 16);
+    if (this.offsetRadius !== this.radius) {
+      this.offsetRadius = this.radius;
+      this.chunkOffsets = [];
+      for (let dx = -this.radius; dx <= this.radius; dx++)
+        for (let dz = -this.radius; dz <= this.radius; dz++)
+          if (dx * dx + dz * dz <= (this.radius + 0.3) ** 2) this.chunkOffsets.push([dx, dz]);
+      this.chunkOffsets.sort((a, b) => a[0] * a[0] + a[1] * a[1] - b[0] * b[0] - b[1] * b[1]);
+    }
     let n = 0;
-    for (const [a, b] of coords) {
+    for (const [dx, dz] of this.chunkOffsets) {
+      const a = cx + dx,
+        b = cz + dz;
       const key = a + "," + b;
       const old = this.world.chunks.has(key);
       const c = this.world.chunk(a, b);
@@ -475,7 +514,7 @@ export class WorldRenderer {
         if (!initial && n >= 2) break;
       }
     }
-    if (this.meshes.size > coords.length + 12)
+    if (this.meshes.size > this.chunkOffsets.length + 12)
       for (const [key, group] of this.meshes) {
         const [a, b] = key.split(",").map(Number);
         if (Math.abs(a - cx) > this.radius + 1 || Math.abs(b - cz) > this.radius + 1) {
@@ -490,6 +529,7 @@ export class WorldRenderer {
       prev = this.meshes.get(key);
     if (prev) this.disposeGroup(prev);
     const group = new THREE.Group();
+    group.matrixAutoUpdate = false;
     const buckets = Array.from({ length: 5 }, () => ({
       p: [] as number[],
       n: [] as number[],
@@ -537,6 +577,8 @@ export class WorldRenderer {
             }
             continue;
           }
+          const top = y + 2 < HEIGHT ? c.data[x + z * 16 + (y + 2) * 256] : 0;
+          const overheadShade = top && BLOCKS[top].solid ? 0.97 : 1;
           for (let fi = 0; fi < 6; fi++) {
             const f = faces[fi],
               nx = x + f.d[0],
@@ -575,11 +617,7 @@ export class WorldRenderer {
               );
               b.n.push(...f.d);
               b.uv.push(...uvs[k]);
-              let shade = f.s;
-              if (!block.glow) {
-                const top = this.world.get(ox + x, y + 2, oz + z);
-                if (top && BLOCKS[top].solid) shade *= 0.97;
-              } else shade = 1;
+              const shade = block.glow ? 1 : f.s * overheadShade;
               b.col.push(shade, shade, shade);
             }
             b.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
@@ -596,6 +634,7 @@ export class WorldRenderer {
       geo.setIndex(b.idx);
       geo.computeBoundingSphere();
       const mesh = new THREE.Mesh(geo, this.materials[i]);
+      mesh.matrixAutoUpdate = false;
       mesh.castShadow = i === 0;
       mesh.receiveShadow = i === 0;
       group.add(mesh);

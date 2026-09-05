@@ -43,6 +43,7 @@ type Progress = {
   nextAt: number;
   cycle: number;
   random: number;
+  nextWatch?: number;
 };
 export type HorrorSave = {
   version: 1;
@@ -104,7 +105,7 @@ export class HorrorDirector {
       const viewers = event.viewerIds.filter((id) => byId.get(id)?.dimension === event.dimension);
       const looked =
         visual(event.kind) &&
-        this.elapsed - event.at > 0.2 &&
+        this.elapsed - event.at > (event.reason === "passive-watch" ? 0.8 : 0.2) &&
         viewers.some((id) => {
           const c = byId.get(id)!,
             dx = event.p[0] - c.p[0],
@@ -117,7 +118,7 @@ export class HorrorDirector {
               Math.sin(c.pitch) * dy -
               Math.cos(c.yaw) * Math.cos(c.pitch) * dz) /
               length >
-              0.94
+              (event.reason === "passive-watch" ? 0.99 : 0.94)
           );
         });
       if (!viewers.length || looked || this.elapsed - event.at >= event.duration) {
@@ -148,6 +149,44 @@ export class HorrorDirector {
         ),
         risk = 1 + Number(c.night) * 0.35 + Number(c.underground) * 0.45 + Number(alone) * 0.3;
       s.tension = Math.min(1, s.tension + (dt * risk) / 300);
+      // A motionless presence between the main encounters never advances a stage,
+      // starts a hunt or harms anyone. It appears sparsely, outside focused vision.
+      if (s.stage >= 3 && s.stage <= 5 && s.age < s.nextAt - 18) {
+        s.nextWatch ??= s.age + 17 + this.random(s) * 9;
+        const busy = [...this.activeEvents.values()].some((event) =>
+          event.viewerIds.includes(c.id),
+        );
+        if (!busy && s.age >= s.nextWatch) {
+          const angle = c.yaw + (this.random(s) > 0.5 ? 1 : -1) * (0.5 + this.random(s) * 0.35),
+            range = 26 + this.random(s) * 10,
+            p: Vec = [c.p[0] - Math.sin(angle) * range, c.p[1], c.p[2] - Math.cos(angle) * range],
+            viewers = eligible.filter(
+              (q) =>
+                q.dimension === c.dimension &&
+                distance(q.p, c.p) < 18 &&
+                ![...this.activeEvents.values()].some((event) => event.viewerIds.includes(q.id)),
+            ),
+            event: HorrorEvent = {
+              id: "h" + ++this.sequence,
+              kind: "watcher",
+              p,
+              at: this.elapsed,
+              duration: 12 + this.random(s) * 5,
+              intensity: 0.24 + this.random(s) * 0.08,
+              seed: Math.floor(this.random(s) * 0x7fffffff),
+              reason: "passive-watch",
+              viewerIds: viewers.map((q) => q.id),
+              dimension: c.dimension,
+              yaw: Math.atan2(c.p[0] - p[0], c.p[2] - p[2]),
+            };
+          events.push(event);
+          this.activeEvents.set(event.id, event);
+          for (const q of viewers) {
+            const state = this.progress(q.id);
+            state.nextWatch = state.age + 38 + this.random(state) * 24;
+          }
+        }
+      }
       if (s.age < s.nextAt) continue;
       const kind = stages[s.stage],
         peers = visual(kind)
@@ -214,6 +253,7 @@ export class HorrorDirector {
           state.tension = 0.1;
           state.cycle++;
           state.nextAt = 90 + this.random(state) * 30;
+          delete state.nextWatch;
         } else {
           state.stage++;
           const wait =
@@ -256,6 +296,9 @@ export class HorrorDirector {
         nextAt: Math.max(age + 30, s.nextAt),
         cycle: Math.max(0, Math.floor(s.cycle)),
         random: s.random >>> 0,
+        ...(Number.isFinite(s.nextWatch)
+          ? { nextWatch: Math.max(age + 15, Number(s.nextWatch)) }
+          : {}),
       });
     }
   }

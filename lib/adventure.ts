@@ -3,6 +3,18 @@ import { BIOMES, findBiome } from "./biomes";
 import { hash } from "./world";
 import { fromCounts, chestCounts, type ChestSlots } from "./chest-slots";
 import { createFurnace, restoreFurnace, tickFurnace, type FurnaceState } from "./furnace";
+import {
+  armorSlot,
+  armorPoints,
+  clickArmorSlot,
+  emptyEquipment,
+  equipArmorItem,
+  migrateEquipment,
+  type ArmorSlot,
+  type Equipment,
+  type ArmorSource,
+} from "./armor";
+import type { Stack } from "./inventory";
 export type AdventureData = {
   furnaces: Record<string, FurnaceState>;
   chestSlots: Record<string, ChestSlots>;
@@ -10,6 +22,7 @@ export type AdventureData = {
   opened: number;
   harvested: number;
   armor: number;
+  equipment: Equipment;
   awards: string[];
   storage: Record<string, Record<number, number>>;
   crops: Record<string, number>;
@@ -23,6 +36,7 @@ export const newAdventure = (): AdventureData => ({
   opened: 0,
   harvested: 0,
   armor: 0,
+  equipment: emptyEquipment(),
   awards: [],
   storage: {},
   crops: {},
@@ -124,12 +138,16 @@ export class Adventure {
       opened: d.opened,
       harvested: d.harvested,
       armor: d.armor,
+      equipment: { ...d.equipment },
+      armorPoints: armorPoints(d.equipment),
       awards: [...d.awards],
       quests: this.quests(),
       chest: { ...d.storage[this.currentChest] },
       chestSlots: this.chestSlots().map((s) => (s ? { ...s } : null)),
-      furnace: this.currentFurnace && d.furnaces[this.currentFurnace]
-        ? structuredClone(d.furnaces[this.currentFurnace]) : null,
+      furnace:
+        this.currentFurnace && d.furnaces[this.currentFurnace]
+          ? structuredClone(d.furnaces[this.currentFurnace])
+          : null,
       waypoint: w
         ? {
             ...w,
@@ -175,7 +193,6 @@ export class Adventure {
         g.notify("Nowy biom: " + b.name + " • +15 PD");
       }
     }
-    if (d.armor && !(g.inventory[d.armor] > 0)) d.armor = 0;
     for (const q of this.quests())
       if (q.value >= q.target && !d.awards.includes(q.id)) {
         d.awards.push(q.id);
@@ -214,17 +231,20 @@ export class Adventure {
       tickFurnace(state, dt);
     }
     this.furnaceUiTime += dt;
-    if (g.pauseReason === "furnace" && this.furnaceUiTime >= .1) {
+    if (g.pauseReason === "furnace" && this.furnaceUiTime >= 0.1) {
       this.furnaceUiTime = 0;
       g.emit();
     }
   }
   furnaceBlockChanged(x: number, y: number, z: number) {
-    const g = this.game, key = this.key(x, y, z), state = this.data.furnaces[key];
+    const g = this.game,
+      key = this.key(x, y, z),
+      state = this.data.furnaces[key];
     if (g.net || !state || g.world.get(x, y, z) === 29) return;
     delete this.data.furnaces[key];
-    for (const stack of state.slots) if (stack)
-      g.drops.spawn(stack.id, stack.n, g.position.clone().set(x + .5, y + .5, z + .5));
+    for (const stack of state.slots)
+      if (stack)
+        g.drops.spawn(stack.id, stack.n, g.position.clone().set(x + 0.5, y + 0.5, z + 0.5));
     if (this.currentFurnace === key) {
       this.currentFurnace = "";
       if (g.pauseReason === "furnace") g.resume();
@@ -357,6 +377,8 @@ export class Adventure {
     g.save(false);
   }
   respawn() {
+    this.data.equipment = emptyEquipment();
+    this.data.armor = 0;
     const p = this.data.spawn,
       g = this.game;
     if (p) {
@@ -386,18 +408,33 @@ export class Adventure {
     this.data.waypoint = null;
     this.game.emit();
   }
-  equipArmor(id: number) {
-    if (id !== 121 && id !== 122) return;
-    if (this.game.mode === "creative" && !this.game.inventory[id]) this.game.add(id, 1);
-    if (this.game.inventory[id] > 0) {
-      this.data.armor = this.data.armor === id ? 0 : id;
-      this.game.notify(this.data.armor ? "Pancerz założony." : "Pancerz zdjęty.");
-    }
+  equipArmor(id: number, from?: ArmorSource, expected?: Stack | null) {
+    if (!armorSlot(id)) return;
+    if (this.game.net) return this.game.net.equipArmor(id, from, expected);
+    if (!from && this.game.mode === "creative" && !this.game.pack.counts()[id])
+      this.game.add(id, 1);
+    if (!equipArmorItem(this.game.pack, this.data.equipment, id, from, expected)) return;
+    this.data.armor = this.data.equipment.chest;
+    this.game.commitPack();
+    this.game.notify("Pancerz założony.");
+  }
+  armorSlot(slot: ArmorSlot) {
+    if (this.game.net) return this.game.net.armorSlot(slot);
+    if (!clickArmorSlot(this.game.pack, this.data.equipment, slot)) return;
+    this.data.armor = this.data.equipment.chest;
+    this.game.commitPack();
   }
   restore(value: Partial<AdventureData> | undefined) {
     this.reset();
     if (!value || typeof value !== "object") return;
     this.data = { ...this.data, ...value };
+    this.data.equipment = migrateEquipment(
+      value.equipment,
+      Number(value.armor) || 0,
+      this.game.pack,
+    );
+    this.data.armor = this.data.equipment.chest;
+    this.game.inventory = this.game.pack.counts();
     this.data.discovered = Array.isArray(value.discovered)
       ? value.discovered.filter((id) => BIOMES.some((b) => b.id === id))
       : [];

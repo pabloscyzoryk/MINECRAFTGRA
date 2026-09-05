@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { WebSocket } from "ws";
 import { createGameServer, type Store, RENEW, RELEASE, PERSIST } from "../server/gateway";
+import { PROTOCOL } from "../lib/net-protocol";
 const skin = {
   skin: "data:image/png;base64,aGVsbG8=",
   cape: "data:image/png;base64,aGVsbG8=",
@@ -14,7 +15,12 @@ type Client = {
   send: (data: any) => void;
   wait: (fn: (m: any) => boolean) => Promise<any>;
 };
-async function client(port: number, token: string, nick: string): Promise<Client> {
+async function client(
+  port: number,
+  token: string,
+  nick: string,
+  protocol = PROTOCOL,
+): Promise<Client> {
   const ws = new WebSocket("ws://127.0.0.1:" + port + "/api/game");
   const messages: any[] = [];
   ws.on("message", (raw) => messages.push(JSON.parse(raw.toString())));
@@ -30,7 +36,7 @@ async function client(port: number, token: string, nick: string): Promise<Client
     throw Error("Message timeout: " + JSON.stringify(messages.slice(-3)));
   };
   await wait((m) => m.type === "ready");
-  send({ type: "join", protocol: 1, token, nick, skin });
+  send({ type: "join", protocol, token, nick, skin });
   return { ws, messages, send, wait };
 }
 async function start(options: any = { local: true }) {
@@ -189,5 +195,23 @@ test("Production server refuses multiplayer without Redis configuration", async 
     ws.terminate();
     await stop(app, []);
     if (old) process.env.REDIS_URL = old;
+  }
+});
+
+test("Obsolete clients are rejected explicitly rather than silently missing environmental damage", async () => {
+  const app = await start();
+  const clients: Client[] = [];
+  try {
+    const old = await client(app.port, "o".repeat(64), "StarszaWersja", PROTOCOL - 1);
+    clients.push(old);
+    const error = await old.wait((m) => m.type === "error");
+    assert.equal(error.fatal, true);
+    assert.match(error.message, /Odśwież stronę/);
+    assert.equal(
+      old.messages.some((m) => m.type === "welcome"),
+      false,
+    );
+  } finally {
+    await stop(app, clients);
   }
 });

@@ -1,20 +1,9 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import {
-  Users,
-  Mic,
-  MicOff,
-  MessageSquare,
-  Volume2,
-  Wifi,
-  Radio,
-  Shield,
-  Keyboard,
-} from "lucide-react";
+import { Users, Mic, MicOff, MessageSquare, Wifi, Shield, Video, VideoOff } from "lucide-react";
 import type { Game } from "@/lib/engine";
 import { Multiplayer } from "@/lib/multiplayer";
 import { MAX_PLAYERS, validNick } from "@/lib/net-protocol";
-import { keyName } from "@/lib/settings";
 import DifficultyPicker from "@/components/difficulty-picker";
 import { normalizeDifficulty, type Difficulty } from "@/lib/difficulty";
 function useNetwork(net: Multiplayer | null) {
@@ -33,6 +22,21 @@ export default function MultiplayerMenu({ game, onJoined }: { game: Game; onJoin
     [difficulty, setDifficulty] = useState<Difficulty>(normalizeDifficulty(game.difficulty)),
     [error, setError] = useState("");
   useNetwork(net);
+  const joining = useRef<Multiplayer | null>(null);
+  const [, voiceRefresh] = useState(0);
+  useEffect(() => {
+    const unsubscribe = game.voice.subscribe(() => voiceRefresh((value) => value + 1));
+    void game.voice.start();
+    return () => {
+      unsubscribe();
+      const owned = joining.current;
+      if (owned && !owned.connected) {
+        owned.close();
+        if (game.net === owned) game.net = null;
+      }
+      if (!game.net) game.voice.disable();
+    };
+  }, [game]);
   useEffect(() => {
     if (net?.initialized && net.connected) onJoined();
   }, [net?.initialized, net?.connected, onJoined]);
@@ -42,8 +46,11 @@ export default function MultiplayerMenu({ game, onJoined }: { game: Game; onJoin
       return;
     }
     setError("");
+    const keepMicrophone = game.voice.enabled || game.voice.requesting;
     net?.close();
+    if (net && keepMicrophone) void game.voice.start();
     const next = new Multiplayer(game, nick.trim(), difficulty);
+    joining.current = next;
     game.net = next;
     setNet(next);
     void next.voice.playback();
@@ -75,6 +82,35 @@ export default function MultiplayerMenu({ game, onJoined }: { game: Game; onJoin
           }}
         />
       </label>
+      <div className="menu-microphone">
+        <button
+          className={game.voice.enabled ? "speaking" : ""}
+          onClick={() => (game.voice.requesting ? game.voice.disable() : void game.voice.enable())}
+          aria-label={
+            game.voice.enabled || game.voice.requesting ? "Wyłącz mikrofon" : "Włącz mikrofon"
+          }
+        >
+          {game.voice.enabled ? <Mic size={20} /> : <MicOff size={20} />}
+        </button>
+        <div>
+          <b>
+            {game.voice.requesting
+              ? "Zezwól na mikrofon w przeglądarce"
+              : game.voice.enabled
+                ? "Mikrofon gotowy"
+                : "Mikrofon wyłączony"}
+          </b>
+          <p>
+            Domyślnie działa cały czas. Rozmowa zacznie się po dołączeniu. Urządzenie i tryb
+            zmienisz w ustawieniach.
+          </p>
+        </div>
+      </div>
+      {game.voice.error && (
+        <p className="error-note" role="alert">
+          {game.voice.error} Możesz grać bez mikrofonu.
+        </p>
+      )}
       <DifficultyPicker value={difficulty} onChange={setDifficulty} online />
       <p className="panel-footnote">
         Dołączacie do tego samego świata pod tym samym adresem strony. Nowa postać zaczyna z pustym
@@ -110,7 +146,7 @@ export default function MultiplayerMenu({ game, onJoined }: { game: Game; onJoin
           <MessageSquare size={16} /> Enter / T — czat
         </span>
         <span>
-          <Mic size={16} /> V — rozmowa
+          <Mic size={16} /> Rozmowa głosowa
         </span>
         <span>
           <Shield size={16} /> PPM z tarczą — blok
@@ -119,44 +155,92 @@ export default function MultiplayerMenu({ game, onJoined }: { game: Game; onJoin
     </div>
   );
 }
+export function NetworkToolbar({ game, open }: { game: Game; open: (p: string) => void }) {
+  const net = game.net;
+  useNetwork(net);
+  const voice = game.voice;
+  const [, refresh] = useState(0);
+  useEffect(() => voice.subscribe(() => refresh((value) => value + 1)), [voice]);
+  useEffect(() => game.faceCamera.subscribe(() => refresh((value) => value + 1)), [game]);
+  return (
+    <div className="network-hud">
+      {net?.initialized && (
+        <>
+          <button
+            onClick={() => open("media")}
+            title="Gracze i ustawienia rozmowy"
+            className="network-status"
+          >
+            <Wifi size={15} />
+            <b>{net.connected ? net.players.length + " online" : "Ponawianie…"}</b>
+            <small>{net.ping} ms</small>
+          </button>
+          <button onClick={() => open("chat")} title="Czat [Enter / T]" aria-label="Czat">
+            <MessageSquare size={18} />
+          </button>
+          <button
+            className={voice.transmitting ? "speaking" : ""}
+            onClick={() => (voice.requesting ? voice.disable() : void voice.enable())}
+            title={voice.enabled || voice.requesting ? "Wyłącz mikrofon" : "Włącz mikrofon"}
+            aria-label={voice.enabled || voice.requesting ? "Wyłącz mikrofon" : "Włącz mikrofon"}
+          >
+            {voice.enabled ? <Mic size={18} /> : <MicOff size={18} />}
+          </button>
+        </>
+      )}
+      <button
+        className={game.faceCamera.enabled ? "camera-on" : ""}
+        onClick={() => open("media")}
+        title="Mikrofon i kamera"
+        aria-label="Ustawienia mikrofonu i kamerki"
+      >
+        {game.faceCamera.enabled ? <Video size={18} /> : <VideoOff size={18} />}
+        {game.faceCamera.enabled && <span className="camera-live-dot" />}
+      </button>
+    </div>
+  );
+}
+export function NetworkPlayers({ game }: { game: Game }) {
+  const net = game.net;
+  useNetwork(net);
+  if (!net) return null;
+  return (
+    <section className="media-card network-players">
+      <h3>
+        <Users size={19} /> Gracze online · {net.players.length}
+      </h3>
+      <div className="player-list">
+        {net.players.map((player) => (
+          <div key={player.id}>
+            <i
+              className={
+                (
+                  player.id === net.id
+                    ? net.voice.transmitting
+                    : (net.voice.remote.get(player.id)?.until ?? 0) > performance.now()
+                )
+                  ? "speaking"
+                  : ""
+              }
+            />
+            <span>
+              {player.nick}
+              {player.id === net.id ? " (Ty)" : ""}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
 export function NetworkHUD({ game, open }: { game: Game; open: (p: string) => void }) {
   const net = game.net!;
   useNetwork(net);
-  const [voiceSettings, setVoiceSettings] = useState(false),
-    [binding, setBinding] = useState(false);
   const voice = net.voice;
-  useEffect(() => {
-    if (!binding) return;
-    const key = (e: KeyboardEvent) => {
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      if (!["Escape", "Enter", "KeyT"].includes(e.code)) voice.set({ key: e.code });
-      setBinding(false);
-    };
-    window.addEventListener("keydown", key, true);
-    return () => window.removeEventListener("keydown", key, true);
-  }, [binding, voice]);
   if (!net.initialized) return null;
   return (
     <>
-      <div className="network-hud">
-        <button onClick={() => setVoiceSettings((v) => !v)} title="Gracze i rozmowa">
-          <Wifi size={15} />
-          <b>{net.connected ? net.players.length + " online" : "Ponawianie…"}</b>
-          <small>{net.ping} ms</small>
-        </button>
-        <button onClick={() => open("chat")} title="Czat [Enter / T]">
-          <MessageSquare size={19} />
-        </button>
-        <button
-          className={voice.transmitting ? "speaking" : ""}
-          onClick={() => void voice.enable()}
-          title={voice.enabled ? "Wyłącz mikrofon" : "Włącz mikrofon"}
-        >
-          {voice.enabled ? <Mic size={19} /> : <MicOff size={19} />}
-        </button>
-      </div>
-      {voice.enabled && (
+      {voice.enabled && voice.mode !== "always" && (
         <button
           className={"voice-touch " + (voice.transmitting ? "speaking" : "")}
           onPointerDown={(e) => {
@@ -213,83 +297,6 @@ export function NetworkHUD({ game, open }: { game: Game; open: (p: string) => vo
             </p>
           ))}
         </div>
-      )}
-      {voiceSettings && (
-        <section className="voice-popover">
-          <header>
-            <b>Gracze i rozmowa</b>
-            <button onClick={() => setVoiceSettings(false)} aria-label="Zamknij">
-              ×
-            </button>
-          </header>
-          <div className="player-list">
-            {net.players.map((p) => (
-              <div key={p.id}>
-                <i
-                  className={
-                    (
-                      p.id === net.id
-                        ? voice.transmitting
-                        : (voice.remote.get(p.id)?.until ?? 0) > performance.now()
-                    )
-                      ? "speaking"
-                      : ""
-                  }
-                />
-                <span>
-                  {p.nick}
-                  {p.id === net.id ? " (Ty)" : ""}
-                </span>
-              </div>
-            ))}
-          </div>
-          <button className="primary-action" onClick={() => void voice.enable()}>
-            {voice.enabled ? <MicOff size={17} /> : <Mic size={17} />}{" "}
-            {voice.enabled ? "Wyłącz mikrofon" : "Włącz mikrofon"}
-          </button>
-          <label>
-            Aktywacja mikrofonu
-            <select
-              value={voice.mode}
-              onChange={(e) => voice.set({ mode: e.target.value as "hold" | "toggle" | "always" })}
-            >
-              <option value="hold">Trzymanie przycisku</option>
-              <option value="toggle">Kliknięcie włącza / wyłącza</option>
-              <option value="always">Zawsze włączony</option>
-            </select>
-          </label>
-          {voice.mode !== "always" && (
-            <button className="binding-button" onClick={() => setBinding(true)}>
-              <Keyboard size={16} />
-              {binding ? "Naciśnij wybrany klawisz…" : `Klawisz: ${keyName(voice.key)}`}
-            </button>
-          )}
-          <label>
-            <Volume2 size={15} /> Głośność rozmów{" "}
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step=".05"
-              value={voice.volume}
-              onChange={(e) => voice.set({ volume: Number(e.target.value) })}
-            />
-          </label>
-          <p className="mic-state">
-            <Radio size={15} />
-            {voice.enabled
-              ? voice.transmitting
-                ? "Nadajesz"
-                : `Gotowy • ${keyName(voice.key)}`
-              : "Mikrofon wyłączony"}
-          </p>
-          {voice.error && (
-            <p role="alert" className="error-note">
-              {voice.error}
-            </p>
-          )}
-          <small>Mikrofon wymaga zgody przeglądarki. Rozmowę słyszą połączeni gracze.</small>
-        </section>
       )}
     </>
   );

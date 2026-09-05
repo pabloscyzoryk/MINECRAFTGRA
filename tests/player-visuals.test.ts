@@ -289,7 +289,10 @@ test("Held weapon and block models have volume; sprite and replacement resources
     texture.addEventListener("dispose", () => textureDisposals++);
     return texture;
   });
-  for (const id of [1, 101, 102, 103, 104, 105, 108, 118, 126, 127, 128, 129, 130]) {
+  for (const id of [
+    1, 101, 102, 103, 104, 105, 108, 118, 126, 127, 128, 129, 130, 131, 132, 155, 156, 157, 158,
+    159, 160, 161, 162,
+  ]) {
     held.set(id);
     const bounds = new THREE.Box3().setFromObject(held.group).getSize(new THREE.Vector3());
     assert(
@@ -308,4 +311,66 @@ test("Held weapon and block models have volume; sprite and replacement resources
   held.dispose();
   assert.equal(textureDisposals, 1);
   assert.equal(geometryDisposals, 1);
+});
+
+test("All four worn armor pieces follow animated joints, preserve the face opening and dispose once", () => {
+  const model = new SkinModel(dummySkin());
+  model.setEquipment({ head: 152, chest: 122, legs: 153, feet: 154 });
+  const meshes: THREE.Mesh[] = [];
+  model.group.traverse((node) => {
+    if (node instanceof THREE.Mesh && node.name.startsWith("armor-")) meshes.push(node);
+  });
+  assert.equal(meshes.filter((mesh) => mesh.name === "armor-head").length, 5);
+  assert.equal(meshes.filter((mesh) => mesh.name === "armor-feet").length, 2);
+  assert(meshes.every((mesh) => Object.values(model.joints).includes(mesh.parent as THREE.Group)));
+  model.setEquipment({ head: 152, chest: 122, legs: 153, feet: 154 });
+  assert.equal(model.group.getObjectByName("armor-head"), meshes[0]);
+  model.pose(0.4, true, true, 0.2);
+  model.group.updateMatrixWorld(true);
+  const front = model.head.localToWorld(new THREE.Vector3(0, 0.25, 0.8));
+  const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(
+    model.head.getWorldQuaternion(new THREE.Quaternion()),
+  );
+  const ray = new THREE.Raycaster(front, direction);
+  assert.equal(
+    ray.intersectObjects(meshes.filter((mesh) => mesh.name === "armor-head")).length,
+    1,
+    "The first helmet surface on the center ray is its rear plate",
+  );
+  const hit = ray.intersectObjects(meshes.filter((mesh) => mesh.name === "armor-head"))[0];
+  assert(hit.distance > 0.9, "The face center has no armor covering it");
+  let released = 0;
+  meshes.forEach((mesh) => mesh.geometry.addEventListener("dispose", () => released++));
+  model.setEquipment(null);
+  assert.equal(released, meshes.length);
+  assert(meshes.every((mesh) => mesh.parent === null));
+  model.dispose();
+  assert.equal(released, meshes.length);
+});
+
+test("Iron pickaxe keeps a metallic head and shears have two open loops and opposed solid blades", () => {
+  const held = new HeldItemModel(() => {
+    throw new Error("Tools must have real geometry");
+  });
+  held.set(131);
+  const head = held.group.children[2] as THREE.Mesh;
+  assert.equal((head.material as THREE.MeshStandardMaterial).color.getHexString(), "beced2");
+  held.set(132);
+  for (const side of [-1, 1]) {
+    const handle = held.group.getObjectByName("shears-handle-" + side) as THREE.Mesh;
+    const blade = held.group.getObjectByName("shears-blade-" + side) as THREE.Mesh;
+    assert.equal(handle.geometry.type, "TorusGeometry");
+    assert.equal(blade.geometry.type, "ExtrudeGeometry");
+    const bounds = new THREE.Box3().setFromObject(blade);
+    assert(bounds.max.z - bounds.min.z > 0.02);
+    assert(side > 0 ? bounds.max.x > 0.2 : bounds.min.x < -0.2);
+  }
+  let released = 0;
+  held.group.traverse((node) => {
+    if (node instanceof THREE.Mesh) node.geometry.addEventListener("dispose", () => released++);
+  });
+  const count = held.group.children.length;
+  held.dispose();
+  held.dispose();
+  assert.equal(released, count);
 });

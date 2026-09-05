@@ -1,7 +1,19 @@
 import * as THREE from "three";
 import { weapon, miningDuration } from "../lib/combat";
+import { harvestAllowed, isMineableBlock, minedResource } from "../lib/mining";
+import {
+  ARMOR_SLOTS,
+  normalizeEquipment,
+  armorMultiplier,
+  clickArmorSlot,
+  equipArmorItem,
+  migrateEquipment,
+  type Equipment,
+  type ArmorSlot,
+} from "../lib/armor";
 import { fromCounts, chestCounts, clickStack, type ChestSlots } from "../lib/chest-slots";
 import { InventoryPack, maxStack } from "../lib/inventory";
+import type { Stack } from "../lib/inventory";
 import { applyCraftResult, applyInventoryGesture, validGesture } from "../lib/inventory-gestures";
 import {
   createFurnace,
@@ -14,6 +26,7 @@ import { World, hash } from "../lib/world";
 import { FluidSystem } from "../lib/fluid";
 import { BLOCKS, ITEMS, type Dimension } from "../lib/blocks";
 import { Mob, Dragon, type MobKind } from "../lib/entities";
+import { DRAGON_MAX_HEALTH, restoreDragonHealth } from "../lib/dragon-balance";
 import { ignitePortal } from "../lib/portals";
 import {
   DIFFICULTIES,
@@ -23,11 +36,17 @@ import {
 } from "../lib/difficulty";
 import { HorrorDirector, type HorrorContext, type HorrorEvent } from "../lib/horror-director";
 import { placeHorrorEvent } from "../lib/horror-placement";
+import { HorrorHunt, type HuntSignal } from "../lib/horror-hunt";
+import { createHuntEnvironment } from "../lib/horror-terrain";
 import {
   DIMENSIONS_NET,
   MAX_PLAYERS,
   validNick,
   validVec,
+  validFaceFrame,
+  FACE_FRAME_INTERVAL,
+  FACE_FRAME_TIMEOUT,
+  FACE_ROOM_FRAME_BUDGET,
   type Vec,
   type PlayerWire,
   type MobWire,
@@ -48,6 +67,7 @@ type Player = PlayerWire & {
   blocking: boolean;
   grounded: boolean;
   armor: number;
+  equipment: Equipment;
   healed: number;
   lastChat: number;
   difficulty: Difficulty;
@@ -69,6 +89,7 @@ type Shot = {
   dimension: Dimension;
   owner: string;
   life: number;
+  power?: number;
 };
 type PendingDrop = Pick<DropWire, "dimension" | "id" | "n" | "p" | "v">;
 const vec = (p: Vec) => new THREE.Vector3(...p);
@@ -106,9 +127,18 @@ export class Room {
   chat: { nick: string; text: string; time: number; system?: boolean }[] = [];
   drops: DropWire[] = [];
   pendingDrops: PendingDrop[] = [];
+  facePeers = new Map<string, { seen: number; sent: number; viewers: Set<string> }>();
   shots: Shot[] = [];
   dragon = new Dragon();
   horror = new HorrorDirector(this.seed);
+  horrorHunt = new HorrorHunt();
+  huntViewers = new Set<string>();
+  huntEnvironment = createHuntEnvironment(
+    (dimension) => this.region(dimension).world,
+    (dimension, x, z) => {
+      this.ensure(dimension, x, z, 0);
+    },
+  );
   constructor(
     public send: (id: string, data: unknown) => void,
     public now = () => Date.now(),
@@ -171,6 +201,7 @@ export class Room {
       (response as any).pack = pack.snapshot();
     }
     (response as any).inventoryRevision = Number(p.profile.inventoryRevision) || 0;
+    (response as any).equipment = { ...p.equipment };
     if (data.chest) {
       const chest = data.chest as { key: string };
       (response as any).chest = { ...chest, revision: this.chestRevisions[chest.key] ?? 0 };
@@ -179,7 +210,7 @@ export class Room {
       const furnace = data.furnace as { key: string };
       (response as any).furnace = { ...furnace, revision: this.furnaceRevisions[furnace.key] ?? 0 };
     }
-    if (!data.ok && ["inventoryGesture", "settleInventory"].includes(c.type))
+    if (!data.ok && ["inventoryGesture", "settleInventory", "armor", "equipArmor"].includes(c.type))
       (response as any).pack = p.profile.pack;
     const snapshot = structuredClone(response);
     p.responses[c.req] = snapshot;
@@ -238,6 +269,7 @@ export class Room {
         blocking: false,
         grounded: true,
         armor: 0,
+        equipment: normalizeEquipment(null),
         healed: 0,
         lastChat: 0,
       };
@@ -254,6 +286,7 @@ export class Room {
     p.difficulty = selectedDifficulty;
     p.profile.difficulty = selectedDifficulty;
     p.active = false;
+    p.profile.equipment = { ...p.equipment };
     this.send(id, {
       type: "welcome",
       id,
@@ -287,7 +320,77 @@ export class Room {
       seen: p.seen,
       health: p.health,
       difficulty: p.difficulty,
+      equipment: { ...p.equipment },
     };
+  }
+  clearFace(id: string) {
+    const previous = this.facePeers.get(id);
+    if (previous?.viewers.size)
+      this.send("*", {
+        type: "faceFrame",
+        sender: id,
+        frame: null,
+        viewers: [...previous.viewers],
+        cleared: [],
+      });
+    this.facePeers.delete(id);
+  }
+  pruneFaces() {
+    for (const [id, face] of this.facePeers) {
+      const player = this.players.get(id);
+      if (
+        !player ||
+        player.health <= 0 ||
+        this.now() - player.seen > 12000 ||
+        this.now() - face.seen > FACE_FRAME_TIMEOUT
+      )
+        this.clearFace(id);
+    }
+  }
+  faceFrame(id: string, frame: unknown) {
+    const player = this.players.get(id);
+    if (!player || !validFaceFrame(frame)) return;
+    if (frame === null || player.health <= 0 || this.now() - player.seen > 12000) {
+      this.clearFace(id);
+      return;
+    }
+    const now = this.now(),
+      previous = this.facePeers.get(id) ?? {
+        seen: now,
+        sent: -Infinity,
+        viewers: new Set<string>(),
+      };
+    previous.seen = now;
+    this.facePeers.set(id, previous);
+    // 3 FPS for small groups; about 18 relayed frames/s across a crowded public room.
+    const interval = Math.max(
+      FACE_FRAME_INTERVAL * 1000,
+      (this.facePeers.size * 1000) / FACE_ROOM_FRAME_BUDGET,
+    );
+    if (now - previous.sent + 1 < interval) return;
+    previous.sent = now;
+    const viewers = new Set(
+      [...this.players.values()]
+        .filter(
+          (other) =>
+            other.id !== id &&
+            other.health > 0 &&
+            this.now() - other.seen < 12000 &&
+            other.dimension === player.dimension &&
+            vec(other.p).distanceToSquared(vec(player.p)) <= 60 * 60,
+        )
+        .map((other) => other.id),
+    );
+    const cleared = [...previous.viewers].filter((viewer) => !viewers.has(viewer));
+    previous.viewers = viewers;
+    if (viewers.size || cleared.length)
+      this.send("*", {
+        type: "faceFrame",
+        sender: id,
+        frame: viewers.size ? frame : null,
+        viewers: [...viewers],
+        cleared,
+      });
   }
   input(id: string, m: Record<string, unknown>) {
     const p = this.players.get(id);
@@ -303,7 +406,12 @@ export class Room {
       p.yaw = Number.isFinite(m.yaw) ? Number(m.yaw) : 0;
       p.pitch = Math.max(-1.54, Math.min(1.54, Number(m.pitch) || 0));
       p.moving = !!m.moving;
-      if (p.active && m.active !== true && p.difficulty === "horror")
+      if (
+        p.active &&
+        m.active !== true &&
+        p.difficulty === "horror" &&
+        !this.horrorHunt.view(id).some((hunt) => hunt.phase === "caught")
+      )
         this.send(id, { type: "horrorReset" });
       p.active = m.active === true;
       if (m.furnaceKey === null) this.furnaceViewers.delete(id);
@@ -324,8 +432,8 @@ export class Room {
       if (p.held > 0 && !this.owns(p, p.held)) p.held = 0;
       p.blocking = !!m.blocking && p.held === 126;
       p.grounded = !!m.grounded;
-      p.armor =
-        [121, 122].includes(Number(m.armor)) && this.owns(p, Number(m.armor)) ? Number(m.armor) : 0;
+      // Equipment is changed only by atomic inventory commands, never by input metadata.
+      p.armor = p.equipment.chest;
       p.seen = this.now();
       this.ensure(p.dimension, p.p[0], p.p[2]);
     }
@@ -354,9 +462,11 @@ export class Room {
       lastMine: p.profile.lastMine,
       difficulty: p.difficulty,
       food,
+      equipment: { ...p.equipment },
     };
-    if (typeof m.health === "number" && Number.isFinite(m.health) && m.health < health)
-      this.damage(p, health - Math.max(0, m.health));
+    // Profile packets can contain old health from before regeneration or an ACK.
+    // Only an explicit, deduplicated environmentDamage command may report local hazards.
+    p.profile.health = health;
   }
   owns(p: Player, id: number, n = 1) {
     return (
@@ -379,6 +489,8 @@ export class Room {
       p.difficulty = normalizeDifficulty(c.difficulty);
       p.profile.difficulty = p.difficulty;
       this.horror.reset(id);
+      this.horrorHunt.reset(id);
+      this.broadcastHunts();
       this.send(id, { type: "horrorReset" });
       return this.reply(p, c, { ok: true, difficulty: p.difficulty });
     }
@@ -389,9 +501,14 @@ export class Room {
       p.spawnUntil = this.now() + 8000;
       p.hurtUntil = this.now() + 3000;
       p.profile = { ...p.profile, inventory: {}, pack: undefined };
+      p.equipment = normalizeEquipment(null);
+      p.profile.equipment = { ...p.equipment };
+      p.armor = 0;
       p.profile.food = 20;
       p.hungerClock = 0;
       this.horror.reset(id);
+      this.horrorHunt.reset(id);
+      this.broadcastHunts();
       this.send(id, { type: "horrorReset" });
       return this.reply(p, c, { ok: true, health: 20 });
     }
@@ -404,6 +521,73 @@ export class Room {
       return this.reply(p, c, { ok: true, health: p.health });
     }
     if (p.health <= 0) return reject("Najpierw odrodź postać.");
+    if (c.type === "armor" || c.type === "equipArmor") {
+      const revision = Number(p.profile.inventoryRevision) || 0;
+      if (c.baseRevision !== revision) return reject("Ekwipunek się zmienił. Spróbuj ponownie.");
+      const pack = new InventoryPack();
+      pack.restore((p.profile.pack ?? {}) as any);
+      pack.reconcile((p.profile.inventory ?? {}) as Record<number, number>);
+      const equipment = { ...p.equipment };
+      if (c.type === "armor") {
+        if (!ARMOR_SLOTS.includes(c.slot as ArmorSlot))
+          return reject("Nieprawidłowe miejsce pancerza.");
+        const expected = c.expectedCursor as { id?: unknown; n?: unknown } | null | undefined;
+        if (
+          expected !== undefined &&
+          (expected === null
+            ? pack.cursor !== null
+            : !pack.cursor || expected.id !== pack.cursor.id || expected.n !== pack.cursor.n)
+        )
+          return reject("Przedmiot trzymany kursorem się zmienił.");
+        if (
+          c.expectedEquipped !== undefined &&
+          c.expectedEquipped !== equipment[c.slot as ArmorSlot]
+        )
+          return reject("Pancerz w tym miejscu się zmienił.");
+        if (!clickArmorSlot(pack, equipment, c.slot as ArmorSlot))
+          return reject("Ten przedmiot nie pasuje do miejsca pancerza.");
+      } else {
+        const from = c.from as { area: "slots" | "grid"; index: number } | undefined;
+        if (
+          from !== undefined &&
+          (!from ||
+            !["slots", "grid"].includes(from.area) ||
+            !Number.isInteger(from.index) ||
+            from.index < 0 ||
+            from.index >= pack[from.area].length)
+        )
+          return reject("Nieprawidłowe źródło elementu pancerza.");
+        if (
+          !Number.isInteger(c.id) ||
+          !equipArmorItem(
+            pack,
+            equipment,
+            Number(c.id),
+            from,
+            c.expected as Stack | null | undefined,
+          )
+        )
+          return reject("Nie masz tego elementu pancerza w wybranym miejscu.");
+      }
+      p.equipment = equipment;
+      p.armor = equipment.chest;
+      p.profile.equipment = { ...equipment };
+      p.profile.pack = pack.snapshot();
+      p.profile.inventory = pack.counts();
+      return this.reply(p, c, { ok: true });
+    }
+    if (c.type === "environmentDamage") {
+      if (
+        !["fall", "lava", "drowning", "void"].includes(String(c.reason)) ||
+        typeof c.amount !== "number" ||
+        !Number.isFinite(c.amount) ||
+        c.amount <= 0 ||
+        c.amount > 100
+      )
+        return reject("Nieprawidłowe obrażenia środowiskowe.");
+      this.damage(p, c.amount, [0, 0, 0], "environment", String(c.reason));
+      return this.reply(p, c, { ok: true });
+    }
     if (c.type === "transfer") return reject("Użyj pól skrzyni.");
     if (c.type === "inventoryGesture" || c.type === "settleInventory") {
       if (c.baseRevision !== (Number(p.profile.inventoryRevision) || 0))
@@ -587,12 +771,38 @@ export class Room {
           damage *= 0.65;
         } else damage *= 0.25;
       }
-      damage *= target.armor === 122 ? 0.55 : target.armor === 121 ? 0.75 : 1;
       const knock = delta.normalize().multiplyScalar(stats.knockback);
       knock.y = 2.8;
       p.pvpUntil = target.pvpUntil = this.now() + 20000;
-      this.damage(target, Math.max(1, Math.round(damage)), array(knock), "pvp");
+      this.damage(target, Math.max(1, Math.round(damage)), array(knock), "pvp", "pvp");
       return this.reply(p, c, { ok: true, message: critical ? "Trafienie krytyczne!" : undefined });
+    }
+    if (c.type === "huntHit") {
+      const stats = weapon(p.held);
+      if (
+        p.difficulty !== "horror" ||
+        this.now() - p.lastAction < stats.cooldown * 1000 ||
+        p.stamina < stats.stamina
+      )
+        return reject("Nie możesz teraz zaatakować tego celu.");
+      const hit = this.horrorHunt.attack(
+        {
+          huntId: String(c.target),
+          attackerId: id,
+          damage: stats.damage,
+          reach: stats.reach,
+          cooldown: stats.cooldown,
+        },
+        this.horrorContexts(
+          [...this.players.values()].filter((player) => this.now() - player.seen < 12000),
+        ),
+        this.huntEnvironment,
+      );
+      if (!hit.ok) return reject("Gość jest zasłonięty, odporny lub poza zasięgiem.");
+      p.lastAction = this.now();
+      p.stamina -= stats.stamina;
+      this.broadcastHunts();
+      return this.reply(p, c, { ok: true, huntDamage: hit.damage });
     }
     if (c.type === "hit") {
       if (this.now() - p.lastAction < weapon(p.held).cooldown * 1000)
@@ -737,45 +947,43 @@ export class Room {
         cost,
       });
     }
-    if (this.now() - p.lastAction < 110) return reject("Poczekaj chwilę.");
+    if (
+      this.now() - p.lastAction < 110 &&
+      !(c.type === "mine" && miningDuration(block, p.held) === 0)
+    )
+      return reject("Poczekaj chwilę.");
     p.lastAction = this.now();
     if (c.type === "mine") {
+      if (block !== c.expected || !isMineableBlock(block, y))
+        return reject("Ten blok już się zmienił lub nie można go wydobyć.");
       const elapsed = this.now() - (Number(p.profile.lastMine) || 0);
       if (elapsed < miningDuration(block, p.held) * 650)
         return reject("Blok wymaga dłuższego kopania.");
       p.profile.lastMine = this.now();
-      if (block !== c.expected || !block || [7, 13, 18, 35].includes(block))
-        return reject("Ten blok już się zmienił.");
-      if (block === 12 && p.held !== 103) return reject("Obsydian wymaga diamentowego kilofa.");
       w.set(x, y, z, 0);
       const grant: number[][] = [];
-      if ([64, 65, 66].includes(block)) {
+      const harvest = harvestAllowed(block, p.held);
+      if (harvest && [64, 65, 66].includes(block)) {
         grant.push([116, block === 66 ? 3 : 1]);
         if (block === 66) grant.push([117, 2]);
         delete this.region(p.dimension).crops[key];
-      } else if (block === 79) {
+      } else if (harvest && block === 79) {
         if (Math.random() < 0.65) grant.push([116, 1]);
-      } else
-        grant.push([
-          block === 1
-            ? 2
-            : block === 3
-              ? 9
-              : block === 20
-                ? 109
-                : block === 22
-                  ? 111
-                  : block === 42 && Math.random() < 0.22
-                    ? 124
-                    : block,
-          1,
-        ]);
+      } else if (harvest) {
+        const resource = minedResource(block);
+        grant.push([block === 42 && Math.random() < 0.22 ? 124 : resource.id, resource.n]);
+      }
       if (block === 61 && this.storage[key]) {
         for (const [i, n] of Object.entries(this.storage[key])) grant.push([Number(i), n]);
         delete this.storage[key];
         delete this.slots[key];
       }
-      return this.reply(p, c, { ok: true, grant, mined: true, xp: block === 22 ? 8 : 1 });
+      return this.reply(p, c, {
+        ok: true,
+        grant,
+        mined: true,
+        xp: harvest ? (block === 22 ? 8 : 1) : 0,
+      });
     }
     if (c.type === "use") {
       const held = p.held;
@@ -805,9 +1013,10 @@ export class Room {
         return reject("Nieprawidłowe miejsce.");
       this.ensure(p.dimension, a, d);
       const old = w.get(a, b, d);
-      if (old !== 0 && old !== 7 && !BLOCKS[old]?.plant) return reject("To miejsce jest zajęte.");
+      if (old !== 0 && old !== 7 && !(held === 115 && old === 15) && !BLOCKS[old]?.plant)
+        return reject("To miejsce jest zajęte.");
       const next = held === 115 ? 7 : held === 116 ? 64 : held;
-      if (!BLOCKS[next] || next < 1 || next === 35 || next === 13 || next === 18)
+      if (!BLOCKS[next] || next < 1 || next === 13 || next === 18)
         return reject("Nie można postawić tego przedmiotu.");
       if (held === 116 && (p.dimension !== "overworld" || w.get(a, b - 1, d) !== 63))
         return reject("Nasiona wymagają ziemi uprawnej.");
@@ -826,7 +1035,10 @@ export class Room {
         )
       )
         return reject("W tym miejscu stoi gracz.");
-      if (!(held === 115 && p.dimension === "nether")) w.set(a, b, d, next);
+      if (held === 115) {
+        if (p.dimension !== "nether" && !w.pourWater(a, b, d))
+          return reject("Brak miejsca na wodę.");
+      } else w.set(a, b, d, next);
       if (next === 64) this.region(p.dimension).crops[p.dimension + ":" + [a, b, d]] = 0;
       return this.reply(p, c, {
         ok: true,
@@ -858,12 +1070,18 @@ export class Room {
     });
   }
   queuePendingDrop(drop: PendingDrop) {
-    const same = this.pendingDrops.filter((d) => d.dimension === drop.dimension && d.id === drop.id);
-    let target = same.find((d) => d.p.every((value, axis) =>
-      Math.floor(value / 16) === Math.floor(drop.p[axis] / 16)));
+    const same = this.pendingDrops.filter(
+      (d) => d.dimension === drop.dimension && d.id === drop.id,
+    );
+    let target = same.find((d) =>
+      d.p.every((value, axis) => Math.floor(value / 16) === Math.floor(drop.p[axis] / 16)),
+    );
     if (!target && this.pendingDrops.length >= 512 && same.length)
-      target = same.reduce((nearest, d) => vec(d.p).distanceToSquared(vec(drop.p)) <
-        vec(nearest.p).distanceToSquared(vec(drop.p)) ? d : nearest);
+      target = same.reduce((nearest, d) =>
+        vec(d.p).distanceToSquared(vec(drop.p)) < vec(nearest.p).distanceToSquared(vec(drop.p))
+          ? d
+          : nearest,
+      );
     if (target) {
       target.n += drop.n;
       return;
@@ -873,7 +1091,8 @@ export class Room {
       // The finite item catalog bounds the snapshot while every quantity is preserved.
       const groups = new Map<string, PendingDrop>();
       for (const pending of this.pendingDrops) {
-        const key = pending.dimension + ":" + pending.id, group = groups.get(key);
+        const key = pending.dimension + ":" + pending.id,
+          group = groups.get(key);
         if (group) group.n += pending.n;
         else groups.set(key, pending);
       }
@@ -892,13 +1111,21 @@ export class Room {
     n: number,
     knockback: Vec = [0, 0, 0],
     source: "environment" | "pvp" = "environment",
+    reason: string = source,
   ) {
     if (p.health <= 0 || p.hurtUntil > this.now()) return;
     if (source !== "pvp") n = Math.max(0.1, n * difficultyRules(p.difficulty).environmentDamage);
+    if (!["fall", "void", "drowning", "hunger", "horror"].includes(reason))
+      n *= armorMultiplier(p.equipment);
     p.health = Math.max(0, p.health - n);
     p.healed = this.now();
     p.hurtUntil = this.now() + 800;
     if (p.health === 0) {
+      for (const id of Object.values(p.equipment))
+        if (id) this.drop(p.dimension, id, 1, [p.p[0], p.p[1] + 0.7, p.p[2]]);
+      p.equipment = normalizeEquipment(null);
+      p.profile.equipment = { ...p.equipment };
+      p.armor = 0;
       const inventory = (p.profile.inventory ?? {}) as Record<number, number>;
       for (const [id, n] of Object.entries(inventory))
         if (this.validItem(Number(id)))
@@ -909,6 +1136,7 @@ export class Room {
           ]);
       p.profile = { ...p.profile, inventory: {}, pack: undefined };
       this.horror.reset(p.id);
+      this.horrorHunt.reset(p.id);
       this.send(p.id, { type: "horrorReset" });
       this.message("Serwer", p.nick + " poległ. Przedmioty czekają w miejscu śmierci.", true);
     }
@@ -918,6 +1146,7 @@ export class Room {
       type: "damage",
       health: p.health,
       amount: n,
+      reason,
       knockback,
       inventoryRevision: Number(p.profile.inventoryRevision) || 0,
     });
@@ -968,6 +1197,7 @@ export class Room {
         array(m.group.position),
       );
       if (m.kind === "enderman") this.drop(p.dimension, 111, 1, array(m.group.position));
+      if (m.kind === "cow") this.drop(p.dimension, 140, 1, array(m.group.position));
       this.send(p.id, { type: "award", xp: m.hostile ? 8 : 3 });
     }
   }
@@ -1020,8 +1250,8 @@ export class Room {
       r.mobs.set("m" + ++this.sequence, m);
     }
   }
-  tickHorror(dt: number, players: Player[]) {
-    const contexts: HorrorContext[] = players.map((p) => {
+  horrorContexts(players: Player[]): HorrorContext[] {
+    return players.map((p) => {
       const world = this.region(p.dimension).world;
       return {
         id: p.id,
@@ -1036,7 +1266,71 @@ export class Room {
         underground: world.surface(p.p[0], p.p[2]) > p.p[1] + 5,
       };
     });
-    for (const event of this.horror.tick(dt, contexts)) {
+  }
+  broadcastHunts() {
+    for (const player of this.players.values()) {
+      const hunt =
+        player.difficulty === "horror" && player.health > 0 && this.now() - player.seen < 12000
+          ? (this.horrorHunt.view(player.id)[0] ?? null)
+          : null;
+      if (hunt || this.huntViewers.has(player.id))
+        this.send(player.id, { type: "horrorHunt", hunt, clock: this.horrorHunt.elapsed });
+      if (hunt) this.huntViewers.add(player.id);
+      else this.huntViewers.delete(player.id);
+    }
+  }
+  applyHuntSignals(signals: HuntSignal[]) {
+    for (const signal of signals) {
+      if (signal.type === "caught") {
+        const p = this.players.get(signal.playerId),
+          hunt = signal.hunt;
+        if (!p || p.difficulty !== "horror" || p.health <= 0) continue;
+        p.hurtUntil = Math.max(p.hurtUntil, this.now() + 1400);
+        const event: HorrorEvent = {
+          id: "caught-" + hunt.id,
+          kind: "jumpscare",
+          p: [...hunt.p],
+          duration: 1.3,
+          intensity: 1,
+          seed: hunt.seed,
+          reason: "caught",
+          viewerIds: [p.id],
+          dimension: hunt.dimension,
+          at: this.horror.elapsed,
+          yaw: hunt.yaw,
+        };
+        this.send(p.id, { type: "horror", event });
+      } else if (signal.type === "death") {
+        const p = this.players.get(signal.playerId);
+        if (p && p.difficulty === "horror" && p.health > 0 && this.now() - p.seen < 12000) {
+          p.hurtUntil = 0;
+          this.damage(p, 1000000, [0, 0, 0], "environment", "horror");
+        }
+      } else {
+        for (const id of signal.hunt.viewerIds) {
+          const p = this.players.get(id);
+          if (p?.difficulty === "horror" && p.health > 0 && this.now() - p.seen < 12000)
+            this.send(id, {
+              type: "award",
+              xp: signal.reason === "banished" ? 100 : 0,
+              message:
+                signal.reason === "banished"
+                  ? "Gość został odpędzony. +100 PD"
+                  : "Zgubiłeś Gościa. Odzyskaj oddech.",
+            });
+        }
+      }
+    }
+  }
+  tickHorror(dt: number, players: Player[]) {
+    const contexts = this.horrorContexts(players);
+    for (const event of this.horror.tick(
+      dt,
+      contexts.map((context) => ({
+        ...context,
+        active: context.active && !this.horrorHunt.view(context.id).length,
+      })),
+    )) {
       const viewers = event.viewerIds.filter((id) => {
         const p = this.players.get(id);
         return (
@@ -1045,6 +1339,10 @@ export class Room {
       });
       if (!viewers.length) continue;
       event.viewerIds = viewers;
+      if (event.kind === "jumpscare") {
+        this.horrorHunt.start(event, contexts, this.huntEnvironment);
+        continue;
+      }
       if (["watcher", "silhouette", "approach"].includes(event.kind)) {
         const anchor = this.players.get(viewers[0])!,
           underground = contexts.find((c) => c.id === anchor.id)!.underground;
@@ -1052,6 +1350,9 @@ export class Room {
       }
       for (const id of viewers) this.send(id, { type: "horror", event: structuredClone(event) });
     }
+    const update = this.horrorHunt.tick(dt, contexts, this.huntEnvironment);
+    this.applyHuntSignals(update.signals);
+    if (this.tickId % 2 === 0 || update.signals.length) this.broadcastHunts();
   }
   furnaceInReach(p: Player, key: string) {
     if (!key.startsWith(p.dimension + ":")) return false;
@@ -1124,10 +1425,12 @@ export class Room {
     }
   }
   placeHorrorEvent(event: HorrorEvent, anchor: Vec, underground: boolean) {
-    placeHorrorEvent(event, anchor, underground, this.region(event.dimension).world,
-      (x, z) => { this.ensure(event.dimension, x, z, 0); });
+    placeHorrorEvent(event, anchor, underground, this.region(event.dimension).world, (x, z) => {
+      this.ensure(event.dimension, x, z, 0);
+    });
   }
   tick(dt: number) {
+    this.pruneFaces();
     this.clock += dt;
     this.tickId++;
     const active = [...this.players.values()].filter((p) => this.now() - p.seen < 12000);
@@ -1141,7 +1444,7 @@ export class Room {
       if (p.hungerClock >= 25) {
         p.hungerClock -= 25;
         p.profile.food = Math.max(0, Number(p.profile.food ?? 20) - 1);
-        if (p.profile.food === 0) this.damage(p, 1);
+        if (p.profile.food === 0) this.damage(p, 1, [0, 0, 0], "environment", "hunger");
       }
       if (
         Number(p.profile.food ?? 20) > 14 &&
@@ -1180,10 +1483,32 @@ export class Room {
           this.clock,
           vec(p.p),
           r.world,
-          (n) => this.damage(p, n),
-          (pos) => this.enemyShot(dimension, pos, p),
+          (n) => {
+            if (
+              m.group.position.distanceTo(vec(p.p)) < 2.65 &&
+              this.lineClear(
+                r.world,
+                m.group.position.clone().add(new THREE.Vector3(0, 1.3, 0)),
+                vec(p.p).add(new THREE.Vector3(0, 1.3, 0)),
+              )
+            )
+              this.damage(p, n, [0, 0, 0], "environment", "mob");
+          },
           (pos) => {
-            for (const q of targets) if (vec(q.p).distanceTo(pos) < 4) this.damage(q, 8);
+            if (this.lineClear(r.world, pos, vec(p.p).add(new THREE.Vector3(0, 1.3, 0))))
+              this.enemyShot(dimension, pos, p);
+          },
+          (pos) => {
+            for (const q of targets)
+              if (
+                vec(q.p).distanceTo(pos) < 4 &&
+                this.lineClear(
+                  r.world,
+                  pos.clone().add(new THREE.Vector3(0, 1, 0)),
+                  vec(q.p).add(new THREE.Vector3(0, 1, 0)),
+                )
+              )
+                this.damage(q, 8, [0, 0, 0], "environment", "explosion");
             for (let x = -2; x <= 2; x++)
               for (let y = 0; y < 3; y++)
                 for (let z = -2; z <= 2; z++)
@@ -1233,30 +1558,58 @@ export class Room {
       }
     }
     const end = active.filter((p) => p.dimension === "end" && p.health > 0);
-    if (end.length)
-      this.dragon.update(dt, 8 - this.crystals.length, vec(end[0].p), (pos) =>
-        this.enemyShot("end", pos, end[Math.floor(Math.random() * end.length)]),
+    if (end.length) {
+      const target = end[Math.floor(this.dragon.time / 6) % end.length];
+      this.dragon.update(dt, 8 - this.crystals.length, vec(target.p), (pos, power, speed, aim) =>
+        this.enemyShot("end", pos, target, power, speed, aim),
       );
+    }
     for (const s of this.shots) {
+      const previousShot = array(s.p);
       s.life -= dt;
       s.p.addScaledVector(s.v, dt);
       const w = this.ensure(s.dimension, s.p.x, s.p.z, 0);
-      if (w.solid(s.p.x, s.p.y, s.p.z)) s.life = 0;
+      if (w.solid(s.p.x, s.p.y, s.p.z) || !this.lineClear(w, vec(previousShot), s.p)) s.life = 0;
+      if (s.life <= 0) continue;
       if (!s.owner) {
         for (const p of active)
           if (
             p.dimension === s.dimension &&
+            p.health > 0 &&
             vec(p.p)
               .add(new THREE.Vector3(0, 1, 0))
               .distanceTo(s.p) < 0.9
           ) {
-            if (!this.safe(p) && this.now() > p.spawnUntil) this.damage(p, 4);
+            if (!this.safe(p) && this.now() > p.spawnUntil)
+              this.damage(p, s.power ?? 4, [0, 0, 0], "environment", "projectile");
             s.life = 0;
             break;
           }
       } else {
         const p = this.players.get(s.owner);
-        if (p) {
+        if (p && p.dimension === s.dimension && this.now() - p.seen < 12000) {
+          if (s.life > 0 && p.difficulty === "horror") {
+            const contexts = this.horrorContexts(active);
+            for (const hunt of this.horrorHunt.view(p.id))
+              if (
+                this.horrorHunt.projectileHit(
+                  {
+                    huntId: hunt.id,
+                    attackerId: p.id,
+                    damage: 20,
+                    from: previousShot,
+                    to: array(s.p),
+                  },
+                  contexts,
+                  this.huntEnvironment,
+                ).ok
+              ) {
+                s.life = 0;
+                this.broadcastHunts();
+                break;
+              }
+          }
+          if (s.life <= 0) continue;
           for (const target of active)
             if (
               target.id !== p.id &&
@@ -1271,10 +1624,17 @@ export class Room {
                 .distanceTo(s.p) < 0.8
             ) {
               p.pvpUntil = target.pvpUntil = this.now() + 20000;
-              this.damage(target, 7, array(s.v.clone().normalize().multiplyScalar(3)), "pvp");
+              this.damage(
+                target,
+                7,
+                array(s.v.clone().normalize().multiplyScalar(3)),
+                "pvp",
+                "pvp",
+              );
               s.life = 0;
               break;
             }
+          if (s.life <= 0) continue;
           for (const m of this.region(s.dimension).mobs.values())
             if (
               !m.dead &&
@@ -1288,6 +1648,7 @@ export class Room {
               s.life = 0;
               break;
             }
+          if (s.life <= 0) continue;
           if (s.dimension === "end") {
             for (let i = 0; i < 8; i++)
               if (!this.crystals.includes(i) && this.crystalPosition(i).distanceTo(s.p) < 1.4) {
@@ -1299,7 +1660,7 @@ export class Room {
               s.life = 0;
             }
           }
-        }
+        } else s.life = 0;
       }
     }
     this.shots = this.shots.filter((s) => s.life > 0);
@@ -1322,17 +1683,24 @@ export class Room {
     this.drops = this.drops.filter((d) => d.life > 0 && d.n > 0 && d.p[1] > -30);
     this.drainPendingDrops();
   }
-  enemyShot(d: Dimension, pos: THREE.Vector3, p: Player) {
+  enemyShot(
+    d: Dimension,
+    pos: THREE.Vector3,
+    p: Player,
+    power = 4,
+    speed = 12,
+    aim?: THREE.Vector3,
+  ) {
     this.shots.push({
       p: pos.clone(),
-      v: vec(p.p)
-        .add(new THREE.Vector3(0, 1, 0))
+      v: (aim?.clone() ?? vec(p.p).add(new THREE.Vector3(0, 1, 0)))
         .sub(pos)
         .normalize()
-        .multiplyScalar(12),
+        .multiplyScalar(speed),
       dimension: d,
       owner: "",
       life: 6,
+      power,
     });
   }
   mobWire(id: string, m: Mob): MobWire {
@@ -1356,6 +1724,7 @@ export class Room {
     for (const [d, r] of this.regions) mobs[d] = [...r.mobs].map(([id, m]) => this.mobWire(id, m));
     const dragon = {
       hp: round(this.dragon.hp),
+      orbit: this.dragon.orbit,
       time: this.dragon.time,
       shot: this.dragon.shot,
       radius: this.dragon.radius,
@@ -1432,6 +1801,8 @@ export class Room {
   frameDragon() {
     return {
       hp: this.dragon.hp,
+      maxHp: DRAGON_MAX_HEALTH,
+      orbit: this.dragon.orbit,
       time: this.dragon.time,
       dead: this.dragon.dead,
       deathTime: this.dragon.deathTime,
@@ -1439,6 +1810,7 @@ export class Room {
   }
   restore(s: ReturnType<Room["save"]>) {
     if (s.version !== 1) throw Error("Unsupported world");
+    this.facePeers.clear();
     this.clock = s.clock;
     this.tickId = s.tick;
     this.sequence = s.sequence;
@@ -1456,21 +1828,47 @@ export class Room {
     this.furnaceViewers.clear();
     this.dirtyFurnaces.clear();
     this.horror.restore(s.horror);
+    this.horrorHunt = new HorrorHunt();
+    this.huntViewers.clear();
     this.chat = s.chat ?? [];
     this.drops = s.drops;
     this.pendingDrops = [];
     for (const d of s.pendingDrops ?? [])
-      if (DIMENSIONS_NET.includes(d.dimension) && this.validItem(d.id) &&
-        Number.isSafeInteger(d.n) && d.n > 0 && validVec(d.p) && validVec(d.v))
-        this.queuePendingDrop({ dimension: d.dimension, id: d.id, n: d.n, p: [...d.p], v: [...d.v] });
+      if (
+        DIMENSIONS_NET.includes(d.dimension) &&
+        this.validItem(d.id) &&
+        Number.isSafeInteger(d.n) &&
+        d.n > 0 &&
+        validVec(d.p) &&
+        validVec(d.v)
+      )
+        this.queuePendingDrop({
+          dimension: d.dimension,
+          id: d.id,
+          n: d.n,
+          p: [...d.p],
+          v: [...d.v],
+        });
     Object.assign(this.dragon, s.dragon);
+    this.dragon.hp = restoreDragonHealth(s.dragon?.hp, s.dragon?.maxHp, s.won);
+    if (!Number.isFinite(s.dragon?.orbit)) this.dragon.orbit = (Number(s.dragon?.time) || 0) * 0.26;
     this.players = new Map(
       s.players.map((p) => {
         const difficulty = normalizeDifficulty(p.profile?.difficulty);
+        const pack = new InventoryPack();
+        pack.restore((p.profile.pack ?? {}) as any);
+        pack.reconcile((p.profile.inventory ?? {}) as Record<number, number>);
+        const equipment = migrateEquipment(
+          p.equipment,
+          Number((p.profile.adventure as any)?.armor ?? p.armor) || 0,
+          pack,
+        );
         return [
           p.id,
           {
             ...p,
+            equipment,
+            armor: equipment.chest,
             seen: 0,
             active: false,
             sprinting: false,
@@ -1479,6 +1877,9 @@ export class Room {
             pvpUntil: 0,
             profile: {
               ...p.profile,
+              equipment: { ...equipment },
+              pack: pack.snapshot(),
+              inventory: pack.counts(),
               difficulty,
               food: Number.isFinite(p.profile?.food) ? p.profile.food : 20,
             },

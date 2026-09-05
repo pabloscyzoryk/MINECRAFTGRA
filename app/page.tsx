@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { DRAGON_MAX_HEALTH, DRAGON_ENRAGED_HEALTH } from "@/lib/dragon-balance";
 import {
   ArrowUpRight,
   ArrowRight,
@@ -37,9 +38,14 @@ import { DIMENSIONS, item, type Mode, type Dimension } from "@/lib/blocks";
 import type { Game, Snapshot, GameSettings } from "@/lib/engine";
 import SlotInventory from "@/components/slot-inventory";
 import { ItemIcon } from "@/lib/item-art";
-import MultiplayerMenu, { NetworkHUD, ChatPanel } from "@/components/multiplayer-menu";
+import MultiplayerMenu, {
+  NetworkHUD,
+  NetworkToolbar,
+  ChatPanel,
+} from "@/components/multiplayer-menu";
 import SkinEditor from "@/components/skin-editor";
 import GameSettingsPanel from "@/components/game-settings";
+import HorrorStatus from "@/components/horror-status";
 import { Journal } from "@/components/adventure-panels";
 import ChestPanel from "@/components/chest-inventory";
 import FurnaceInventory from "@/components/furnace-inventory";
@@ -101,6 +107,7 @@ const title: Record<string, string> = {
   inventory: "Ekwipunek",
   crafting: "Stół rzemieślniczy",
   settings: "Po Twojemu",
+  media: "Mikrofon i kamera",
   dimensions: "Trzy wymiary. Jeden świat.",
   help: "Gotowy na przygodę?",
   death: "To jeszcze nie koniec",
@@ -174,10 +181,26 @@ export default function Home() {
         .catch(() => runtime?.notify("Pełny ekran jest niedostępny w tym widoku."));
     else void document.exitFullscreen();
   };
+  const localCaught =
+    snap?.difficulty === "horror" &&
+    snap.horrorThreat?.phase === "caught" &&
+    snap.horrorThreat.targetId === (runtime?.net?.id ?? "local");
   return (
-    <main className={"game-root " + (!snap?.started && menuSkin ? "with-skin-panel" : "")}>
+    <main
+      className={
+        "game-root " +
+        (!snap?.started && menuSkin ? "with-skin-panel " : "") +
+        (localCaught && settings.horrorJumpscares ? "guest-caught" : "")
+      }
+    >
       <div ref={mount} className="world-canvas" />
-      {snap?.active && snap.difficulty === "horror" && <div className="horror-vignette" aria-hidden="true" style={{ opacity: snap.horrorOverlay }} />}
+      {(snap?.active || localCaught) && snap?.difficulty === "horror" && (
+        <div
+          className="horror-vignette"
+          aria-hidden="true"
+          style={{ opacity: snap.horrorOverlay }}
+        />
+      )}
       {!snap?.started && (
         <>
           <div className="cinema-shade" />
@@ -228,9 +251,7 @@ export default function Home() {
               ◎ Tryb wieloosobowy <span>Jeden publiczny świat →</span>
             </button>
             <div className="menu-row">
-              <button
-                onClick={() => open("world")}
-              >
+              <button onClick={() => open("world")}>
                 {mode === "survival" ? <Mountain size={18} /> : <Sparkles size={18} />}{" "}
                 {snap?.saved ? "Nowy świat" : "Tryb i trudność"}
               </button>
@@ -296,7 +317,7 @@ export default function Home() {
         </>
       )}
       {runtime?.net && <NetworkHUD game={runtime} open={open} />}
-      {snap?.needsCapture && !panel && (
+      {snap?.needsCapture && !panel && !localCaught && (
         <button className="capture-overlay" onClick={() => runtime?.capturePointer()}>
           <span>Wróć do sterowania</span>
           <small>Kliknij, aby przejąć kursor i rozglądać się myszą</small>
@@ -343,22 +364,29 @@ export default function Home() {
               </button>
             </div>
           </header>
-          <button className="quest-card" onClick={() => open("journal")}>
-            <span>
-              <Sparkles size={12} /> DZIENNIK PRZYGODY
-            </span>
-            <p>{snap.objective}</p>
-            <small>
-              {snap.mode === "creative" ? "KREATYWNY" : "PRZETRWANIE"}{" "}
-              {snap.flying
-                ? " · LATANIE"
-                : snap.crouching
-                  ? " · KUCANIE"
-                  : snap.sprinting
-                    ? " · SPRINT"
-                    : ""}
-            </small>
-          </button>
+          <div className="hud-left-stack">
+            {runtime && <NetworkToolbar game={runtime} open={open} />}
+            {snap.difficulty === "horror" && snap.horrorThreat ? (
+              <HorrorStatus threat={snap.horrorThreat} localId={runtime?.net?.id ?? "local"} />
+            ) : (
+              <button className="quest-card" onClick={() => open("journal")}>
+                <span>
+                  <Sparkles size={12} /> DZIENNIK PRZYGODY
+                </span>
+                <p>{snap.objective}</p>
+                <small>
+                  {snap.mode === "creative" ? "KREATYWNY" : "PRZETRWANIE"}{" "}
+                  {snap.flying
+                    ? " · LATANIE"
+                    : snap.crouching
+                      ? " · KUCANIE"
+                      : snap.sprinting
+                        ? " · SPRINT"
+                        : ""}
+                </small>
+              </button>
+            )}
+          </div>
           {snap.adventure.waypoint && snap.dimension === "overworld" && (
             <div className="waypoint-hud">
               <span
@@ -401,16 +429,26 @@ export default function Home() {
           {snap.dimension === "end" && snap.dragon >= 0 && !snap.won && (
             <div className="boss-hud">
               <div>
-                <span>SMOK ENDU</span>
-                <small>{Math.ceil(snap.dragon)} / 300</small>
+                <span>
+                  {snap.dragon <= DRAGON_ENRAGED_HEALTH ? "SMOK ENDU · FURIA" : "SMOK ENDU"}
+                </span>
+                <small>
+                  {Math.ceil(snap.dragon)} / {DRAGON_MAX_HEALTH}
+                </small>
               </div>
               <div className="boss-track">
-                <i style={{ width: Math.max(0, snap.dragon) / 3 + "%" }} />
+                <i
+                  style={{
+                    width: Math.max(0, Math.min(1, snap.dragon / DRAGON_MAX_HEALTH)) * 100 + "%",
+                  }}
+                />
               </div>
               <p>
                 {snap.crystals
                   ? `${snap.crystals} kryształów leczy smoka`
-                  : "Kryształy zniszczone • Atakuj smoka"}
+                  : snap.dragon <= DRAGON_ENRAGED_HEALTH
+                    ? "Furia • Unikaj potrójnych salw"
+                    : "Kryształy zniszczone • Atakuj smoka"}
               </p>
             </div>
           )}
@@ -530,14 +568,14 @@ export default function Home() {
         </>
       )}
       <Dialog
-        open={!!panel}
+        open={!!panel && !localCaught}
         onOpenChange={(v) => {
           if (!v && panel !== "death") close();
         }}
       >
         <DialogContent
           finalFocus={false}
-          className={`game-dialog ${panel === "journal" ? "journal-dialog" : panel === "chest" || panel === "furnace" ? "chest-dialog" : panel === "inventory" || panel === "crafting" ? "inventory-dialog" : panel === "dimensions" ? "dimensions-dialog" : panel === "skin" ? "skin-dialog" : panel === "settings" ? "settings-dialog" : ""}`}
+          className={`game-dialog ${panel === "journal" ? "journal-dialog" : panel === "chest" || panel === "furnace" ? "chest-dialog" : panel === "inventory" || panel === "crafting" ? "inventory-dialog" : panel === "dimensions" ? "dimensions-dialog" : panel === "skin" ? "skin-dialog" : panel === "settings" || panel === "media" ? "settings-dialog" : ""}`}
           showCloseButton={false}
         >
           <div className="panel-heading">
@@ -563,7 +601,7 @@ export default function Home() {
                   ? "Maluj na modelu, edytuj dwie warstwy i stwórz własną pelerynę."
                   : panel === "inventory" || panel === "crafting"
                     ? "Przenoś przedmioty między plecakiem, paskiem i siatką wytwarzania."
-                    : panel === "settings"
+                    : panel === "settings" || panel === "media"
                       ? "Dopasuj grę do swojego stylu."
                       : panel === "pause"
                         ? "Ustawienia i ekwipunek. Na serwerze inni gracze nadal grają."
@@ -681,10 +719,23 @@ export default function Home() {
           )}
           {panel === "journal" && snap && runtime && <Journal game={runtime} snap={snap} />}
           {panel === "chest" && snap && runtime && <ChestPanel game={runtime} snap={snap} />}
-          {panel === "furnace" && snap && runtime && <FurnaceInventory game={runtime} snap={snap} />}
-          {panel === "settings" && <GameSettingsPanel value={settings} onChange={changeSettings}
-            difficulty={snap?.difficulty ?? difficulty} online={!!runtime?.net}
-            onDifficultyChange={(value) => { setDifficulty(value); runtime?.setDifficulty(value); }} />}
+          {panel === "furnace" && snap && runtime && (
+            <FurnaceInventory game={runtime} snap={snap} />
+          )}
+          {(panel === "settings" || panel === "media") && (
+            <GameSettingsPanel
+              game={runtime ?? undefined}
+              initialTab={panel === "media" ? "media" : "graphics"}
+              value={settings}
+              onChange={changeSettings}
+              difficulty={snap?.difficulty ?? difficulty}
+              online={!!runtime?.net}
+              onDifficultyChange={(value) => {
+                setDifficulty(value);
+                runtime?.setDifficulty(value);
+              }}
+            />
+          )}
           {panel === "skin" && <SkinEditor />}
           {panel === "multiplayer" && runtime && (
             <MultiplayerMenu game={runtime} onJoined={() => setPanel("")} />
@@ -796,7 +847,7 @@ export default function Home() {
                 <p>
                   {snap?.mode === "creative"
                     ? "W trybie kreatywnym możesz swobodnie przenosić się między wymiarami."
-                    : "Wypatruj obsydianowych ruin daleko od wioski. Napraw ramę i użyj krzesiwa. Gotowy portal wymaga chwili postoju wewnątrz."}
+                    : "Ruina portalu jest blisko spawnu, przy X −18, Z 12. Woda spływająca na źródło lawy tworzy obsydian. Uzupełnij ramę i użyj krzesiwa."}
                 </p>
               </div>
               {snap?.dimension === "end" && !snap.won && (

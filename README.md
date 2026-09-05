@@ -23,7 +23,7 @@ Wybierz **Tryb wieloosobowy**, wpisz nick i zaproś znajomych pod ten sam adres.
 
 Pięć stylów shaderów oraz opcja **Wyłączone** (bez efektów postprocessingu i cieni), ustawienia światła, zasięgu widzenia, dźwięków i muzyki pozwalają dopasować grę do sprzętu. Kamera ma widok z pierwszej osoby, zza pleców i z przodu. Edytor skórki jest domyślnie otwarty po prawej stronie menu: wybierz gotową skórkę albo narysuj własną, obracając model przy wciśniętym środkowym przycisku myszy.
 
-Broń, podstawowe narzędzia, tarcza, łuk i bloki mają modele 3D widoczne przy nadgarstku także po naciśnięciu **F5**, u innych graczy oraz w podglądzie ekwipunku. Sprzęt podąża za animacją ręki. W pierwszej osobie ramię jest zakotwiczone poniżej kadru, a uderzenie prowadzi dłoń w przód i w dół. Domyślna skórka ma rękawy na górze ramion i odsłoniętą szyję; własnoręcznie edytowane skórki pozostają zachowane.
+Broń, podstawowe narzędzia, tarcza, łuk i bloki mają modele 3D widoczne przy nadgarstku także po naciśnięciu **F5**, u innych graczy oraz w podglądzie ekwipunku. Sprzęt podąża za animacją ręki. Uderzenie trwa 0,23 s we wszystkich widokach, a czas odnowienia pozostaje zależny od broni. W pierwszej osobie ramię jest zakotwiczone poniżej kadru, a uderzenie prowadzi dłoń w przód i w dół. Domyślna skórka ma rękawy na górze ramion i odsłoniętą szyję; własnoręcznie edytowane skórki pozostają zachowane.
 
 ## Pierwsze kroki
 
@@ -34,6 +34,31 @@ Broń, podstawowe narzędzia, tarcza, łuk i bloki mają modele 3D widoczne przy
 5. Otwórz **Atlas** klawiszem **J** i odkrywaj świat. Ruiny portali wymagają przygotowania, zanim zabiorą Cię do kolejnego wymiaru.
 
 **Kontynuuj zapisany świat** odtwarza wcześniejszy ekwipunek. Puste pola dotyczą nowej postaci i odrodzenia. W trybie kreatywnym przedmioty wybierasz z katalogu dostępnego w ekwipunku. Puste pole na pasku podręcznym oznacza pustą rękę.
+
+### Rudy, surowce i zbroje
+
+Pod ziemią znajdziesz węgiel, żelazo, miedź, diamenty oraz nowe złoża złota, czerwonego kamienia, lapis lazuli i szmaragdów. Głębsze warstwy sprzyjają złotu i czerwonym minerałom. W Netherze występują kwarc, złoto i rzadkie pradawne zgliszcza. Skórę pozyskasz z krów. Każda ruda ma odrębną teksturę, a surowce własne ikony.
+
+Rudę żelaza i złota przetop w piecu. Ze zgliszczy otrzymasz złom netherytowy; cztery sztuki złomu i cztery sztabki złota tworzą sztabkę netherytu. Księga receptur pokazuje narzędzia, zbroje i bloki magazynowe. Bloki większości minerałów mieszczą dziewięć sztuk surowca i można je z powrotem rozłożyć; kwarc służy również do budowania.
+
+Pancerz ma **cztery osobne pola: hełm, napierśnik, spodnie i buty**. Załóż część pasującą do pola albo użyj szybkiego przenoszenia. Wyposażenie jest widoczne w podglądzie, po F5 i u pozostałych graczy. Założone części nie zajmują pól plecaka, zapisują się z postacią i wypadają po śmierci.
+
+| Pełny zestaw | Punkty pancerza | Redukcja obrażeń objętych pancerzem |
+|---|---:|---:|
+| Skóra | 7 / 20 | 28% |
+| Złoto | 11 / 20 | 44% |
+| Żelazo | 15 / 20 | 60% |
+| Diament | 20 / 20 | 80% |
+
+Możesz mieszać materiały. Pancerz chroni m.in. przed trafieniami i ogniem, ale nie przed upadkiem, utonięciem, głodem, pustką ani schwytaniem przez Gościa. W multiplayer serwer sprawdza posiadanie części i przeniesienie przedmiotu, więc założenie zbroi nie tworzy jej kopii.
+
+Złote i diamentowe narzędzia mają własne receptury i parametry. Złoto kopie bardzo szybko, ale złoty kilof ma niski poziom zbierania rud; do diamentów potrzebujesz żelaznego lub diamentowego kilofa, a do obsydianu i pradawnych zgliszczy — diamentowego. Netheryt w tej wersji jest surowcem i blokiem magazynowym; zestawy pancerza kończą się na diamencie.
+
+### Portal do Netheru i walka w Endzie
+
+Obsydianowa ruina stoi blisko spawnu przy **X −18, Z 12**, około 28 bloków od punktu startowego. Nadal wymaga uzupełnienia ramy i zapalenia krzesiwem. Obsydian możesz wytworzyć przez skierowanie wody na źródło lawy; możesz też odlewać elementy ramy na miejscu bez wydobywania ich kilofem. Woda styczna do lawy od góry lub boku zamienia źródło w obsydian. W tej wersji lawa występuje jako nierozlewające się źródła.
+
+Smok ma **600 punktów życia**. Kryształy przyspieszają jego regenerację, więc najpierw je zniszcz. Smok wykonuje częstsze przeloty i wystrzeliwuje podwójne salwy; poniżej połowy zdrowia przechodzi w **furię**, przyspiesza i strzela trzema silniejszymi pociskami. Unikaj salw ruchem w bok i korzystaj z osłon. W multiplayer smok zmienia cele między uczestnikami walki; wszyscy walczą z tym samym smokiem. Starszy zapis zachowuje proporcję pozostałego zdrowia przy zwiększeniu jego puli; pokonany smok nie zostaje wskrzeszony.
 
 ## Poziom trudności i Horror
 
@@ -54,9 +79,21 @@ Horror włączasz samodzielnie, wybierając ten poziom. Autorska postać **Gośc
 
 **Gracze na Łatwym, Średnim i Trudnym nie widzą Gościa ani nie słyszą jego dźwięków.** Osoby, które wybrały Horror, mogą przeżywać wspólne spotkania. Możecie jednocześnie budować i rozmawiać z graczami, którzy pozostali przy zwykłym przetrwaniu.
 
-W **Ustawienia → Dźwięk** są osobne opcje **Gość — dźwięki horroru** (`horrorVolume`) i **Nagłe straszenia w trybie Horror** (`horrorJumpscares`). Możesz zmniejszyć głośność lub wyłączyć nagłe straszenia, zachowując odległe spotkania i atmosferę. Przełączenie trudności z Horror na inny poziom wyłącza udział Twojej postaci w tych zdarzeniach.
+W **Ustawienia → Dźwięk** są osobne opcje **Gość — dźwięki horroru** (`horrorVolume`) i **Nagłe straszenia w trybie Horror** (`horrorJumpscares`). Możesz zmniejszyć głośność lub wyłączyć nagłe zbliżenie i krzyk. Wyłączenie efektu jumpscare nie wyłącza polowania ani śmierci po schwytaniu; zmiana trudności z Horror usuwa całe zagrożenie. Przełączenie trudności z Horror na inny poziom wyłącza udział Twojej postaci w tych zdarzeniach.
+
+### Polowanie Gościa
+
+Odległe ślady obecności stopniowo przechodzą w prawdziwe zagrożenie. Między głównymi zdarzeniami Gość potrafi stać nieruchomo daleko w zamgleniu: cicha, rozmyta sylwetka znika po skupieniu na niej wzroku. Te obserwacje nie zadają obrażeń. Przed polowaniem dostajesz czas na reakcję. Gość obserwuje, zmienia pozycję, próbuje zajść Cię z boku i zapowiada skok krótkim bezruchem. Nie przenika przez ściany; niskie przejścia oraz zerwanie linii wzroku pozwalają zyskać dystans.
+
+Najbezpieczniej jest **uciec**. Przed skokiem odsuń się z jego drogi; po chybieniu wykorzystaj chwilę jego słabości. Możesz też podjąć trudny pojedynek: Gość ma dużo zdrowia, poza oknem odsłonięcia otrzymuje mniejsze obrażenia, a broń zachowuje własny zasięg i czas odnowienia. Działają również strzały. Gracze, którzy wybrali Horror, mogą pomóc sobie podczas wspólnego polowania.
+
+**Schwytanie uruchamia krótki jumpscare, po którym postać umiera i upuszcza wyposażenie zgodnie ze zwykłymi zasadami.** To skutek dosięgnięcia przez Gościa, nie nieunikniona śmierć od samego upływu czasu. Po udanej ucieczce lub pokonaniu Gościa przychodzi okres spokoju. Inne poziomy trudności pozostają wolne od tego zagrożenia.
+
+Podczas 1,3-sekundowego schwytania sterowanie ofiary jest zablokowane. Po zakończeniu pojawia się ekran śmierci z działającym kursorem, a odrodzenie przywraca sterowanie. Towarzysze mogą nadal się poruszać. Nagłe zbliżenie maski, szczęki i dłoni oraz warstwowe dźwięki tworzą efekt inspirowany rytmem straszenia FNAF, z własną postacią i własnymi dźwiękami.
 
 ## Sterowanie
+
+Wydobywanie zależy od twardości bloku i narzędzia. Kwiaty zrywa pojedynczy klik; kilofy służą do skał i rud, siekiery do drewna, łopaty do ziemi, a motyka i nożyce do roślin. Żelazny kilof łączy kamienny z diamentowym w rozwoju wyposażenia. Pełne zestawienie wszystkich bloków i narzędzi: **[czasy wydobywania i wymagania surowców](docs/MINING.md)**.
 
 | Klawisz / przycisk | Działanie |
 |---|---|
@@ -78,6 +115,8 @@ W **Ustawienia → Dźwięk** są osobne opcje **Gość — dźwięki horroru** 
 | **Escape** | Zamknij panel / menu pauzy |
 
 Klawisze możesz zmienić w ustawieniach. **E, J, M i H ponownie zamykają swój panel**, jeśli nie wpisujesz tekstu w polu wyszukiwania. Po powrocie gra przejmuje kursor; gdy przeglądarka wymaga dodatkowego kliknięcia, użyj **Wróć do sterowania** albo kliknij w świat.
+
+PPM w grze i jej panelach nie otwiera menu przeglądarki. Sterowanie filtruje nieaktualne ruchy po przechwyceniu kursora i nagłe skoki danych wejściowych; komputer z ekranem dotykowym nadal obsługuje mysz. Obrażenia od mobów i pocisków uwzględniają ściany, a zderzenia pionowe mierzą faktyczny upadek. Krótki komunikat po otrzymaniu obrażeń pomaga rozpoznać ich przyczynę.
 
 ### Ekwipunek, crafting, skrzynie i piec
 
@@ -107,6 +146,8 @@ W ekwipunku **przytrzymaj stos przez krótką chwilę i przeciągnij**, równie�
 
 Układ obsługuje pion i poziom; poziomo pozostaje więcej miejsca na świat. Na słabszym urządzeniu zmniejsz zasięg, rozdzielczość i cienie w ustawieniach. Rzeczywista płynność zależy od urządzenia.
 
+Budowanie geometrii terenu współdzieli próbki zacienienia i ponownie używa kolejności fragmentów świata. W lokalnym porównaniu czterech identycznych fragmentów mediana czasu budowania spadła z 15,08 do 8,94 ms (około 41%), bez zmiany geometrii ani kolorów. To pomiar przygotowania terenu przez procesor, a nie gwarantowany wzrost FPS całej gry.
+
 ## Multiplayer i rozmowy
 
 Wybierz **Tryb wieloosobowy**, wpisz nick i kliknij **Dołącz do świata**. Wszyscy korzystający z tego samego wdrożenia trafiają do wspólnego świata. Serwer ma limit **16 aktywnych graczy**; dostępna wydajność zależy również od hostingu.
@@ -115,13 +156,19 @@ Nick przyjmuje 3–20 liter, cyfr oraz znaków `_` i `-`. Postać jest związana
 
 **Enter lub T** otwiera czat tekstowy; Enter wysyła wiadomość, a Escape wraca do gry. Na telefonie użyj przycisku czatu.
 
-Mikrofon włączasz świadomie przyciskiem w panelu **Gracze i rozmowa**, po udzieleniu zgody przeglądarki. Do wyboru są:
+Po wejściu w **Tryb wieloosobowy** gra od razu prosi przeglądarkę o mikrofon. Domyślnie jest włączony w trybie ciągłym; głos jest wysyłany dopiero po dołączeniu do serwera. Jeśli dostęp został wcześniej przyznany, przeglądarka nie musi pytać ponownie. Odmowa nie blokuje gry. Mikrofon wyłączysz przyciskiem na HUD lub w **Ustawienia → Mikrofon i kamera**. Do wyboru są:
 
 - **Przytrzymywanie** — nadawanie podczas trzymania klawisza lub przycisku ekranowego.
 - **Przełączanie kliknięciem** — kolejne naciśnięcia włączają i wyłączają nadawanie.
 - **Zawsze włączony** — nadawanie po włączeniu mikrofonu, kiedy karta jest widoczna i połączona.
 
-Możesz zmienić klawisz rozmowy i głośność. Pisanie na czacie nie uruchamia skrótu mikrofonu. Ukrycie karty przerywa nadawanie, a wyjście z multiplayer wyłącza mikrofon. Rozmowę słyszą gracze na serwerze również w innych wymiarach; dźwięk jest przesyłany na żywo i nie jest zapisywany w świecie. Mikrofon wymaga **HTTPS lub localhost**.
+W **Ustawienia → Mikrofon i kamera** wybierzesz urządzenie, głośność swojego mikrofonu i innych graczy, próg aktywacji głosem, opóźnienie zamknięcia po wypowiedzi oraz usuwanie echa, szumu i automatyczną czułość. Lokalny test ma miernik poziomu i opcjonalny odsłuch. Ustawisz również klawisz rozmowy. Nowa wersja jednorazowo zmienia dawny domyślny tryb przytrzymywania na ciągły; późniejsze własne ustawienia zostają zachowane. Pisanie na czacie nie uruchamia skrótu mikrofonu. Ukrycie karty przerywa nadawanie, a wyjście z multiplayer wyłącza mikrofon. Rozmowę słyszą gracze na serwerze również w innych wymiarach; dźwięk jest przesyłany na żywo i nie jest zapisywany w świecie. Mikrofon wymaga **HTTPS lub localhost**.
+
+### Kamerka na twarzy
+
+W **Ustawienia → Mikrofon i kamera** wybierz **Włącz kamerkę na twarzy**, a potem zezwól przeglądarce na dostęp. Kamerka działa w grze solo oraz multiplayer. Obraz pojawia się na przedniej ścianie głowy, podąża za jej ruchem i jest widoczny w podglądzie 3D, ekwipunku oraz z przodu po dwukrotnym **F5**. Możesz wybrać kamerę i odbicie lustrzane. Zielona kontrolka na HUD przypomina, że kamerka jest włączona.
+
+Kadr ma do **720 × 720 pikseli**, bez filtra pikselowej skórki. Jakość źródła zależy od kamery. Podgląd lokalny odświeża się do 30 razy na sekundę; online wysyłamy wyraźne klatki JPEG do 3 razy na sekundę, rzadziej przy dużej liczbie kamer. Obraz widzą gracze w tym samym wymiarze, w promieniu 60 bloków. Kamerka nie uruchamia się automatycznie. Jej wyłączenie przywraca skórkę i zatrzymuje urządzenie; ukrycie karty wstrzymuje przekazywanie obrazu. Klatki nie trafiają do zapisów świata ani profilu. Mikrofon i kamerka korzystają z HTTPS lub localhost; ich obsługa przy otwarciu samego pliku HTML zależy od przeglądarki.
 
 ### Walka i PvP
 

@@ -266,6 +266,7 @@ test("Furnace persistence resumes remaining fuel/progress without offline produc
 
 test("Breaking a furnace drops stored contents once and closes its viewers", () => {
   const s = setup();
+  s.room.players.get("a")!.held = 101;
   s.room.furnaces[s.key] = {
     ...createFurnace(),
     slots: [

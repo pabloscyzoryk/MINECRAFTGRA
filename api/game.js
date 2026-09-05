@@ -120,9 +120,54 @@ var BLOCKS = [
   b(83, "Rze\u017Abiony piaskowiec", "#c7ac7d", "Budowanie"),
   b(84, "Pradawna runa", "#84baba", "Budowanie", { glow: true }),
   b(85, "Jasne ceg\u0142y", "#c2c3b6", "Budowanie"),
-  b(86, "Deski namorzynowe", "#9d655a", "Drewno")
+  b(86, "Deski namorzynowe", "#9d655a", "Drewno"),
+  b(87, "Ruda z\u0142ota", "#858789", "Rudy"),
+  b(88, "Ruda redstone", "#717879", "Rudy", { glow: true }),
+  b(89, "Ruda lapis lazuli", "#848b93", "Rudy"),
+  b(90, "Ruda szmaragdu", "#838d86", "Rudy"),
+  b(91, "Ruda kwarcu Netheru", "#80443f", "Rudy"),
+  b(92, "Pradawne zgliszcza", "#654a42", "Rudy"),
+  b(93, "Ruda z\u0142ota Netheru", "#88473b", "Rudy"),
+  b(94, "Blok \u017Celaza", "#cbd3d3", "Rudy"),
+  b(95, "Blok w\u0119gla", "#30343a", "Rudy"),
+  b(96, "Blok redstone", "#b52e32", "Rudy", { glow: true }),
+  b(97, "Blok lapis lazuli", "#3158a8", "Rudy"),
+  b(98, "Blok kwarcu", "#eadfd4", "Budowanie"),
+  b(99, "Blok netherytu", "#4c4244", "Rudy")
 ];
 var ITEMS = [
+  { id: 133, name: "Sztabka z\u0142ota", color: "#e7ba4c", category: "Surowce" },
+  { id: 134, name: "Py\u0142 redstone", color: "#d34740", category: "Surowce" },
+  { id: 135, name: "Lapis lazuli", color: "#4574cd", category: "Surowce" },
+  { id: 136, name: "Szmaragd", color: "#44bf86", category: "Surowce" },
+  { id: 137, name: "Kwarc Netheru", color: "#efdfda", category: "Surowce" },
+  { id: 138, name: "Od\u0142amek netherytu", color: "#806355", category: "Surowce" },
+  { id: 139, name: "Sztabka netherytu", color: "#564d4c", category: "Surowce" },
+  { id: 140, name: "Sk\xF3ra", color: "#ad744d", category: "Surowce" },
+  { id: 141, name: "Sk\xF3rzana czapka", color: "#b38359", category: "Pancerz" },
+  { id: 142, name: "Sk\xF3rzana tunika", color: "#b38359", category: "Pancerz" },
+  { id: 143, name: "Sk\xF3rzane spodnie", color: "#b38359", category: "Pancerz" },
+  { id: 144, name: "Sk\xF3rzane buty", color: "#b38359", category: "Pancerz" },
+  { id: 145, name: "Z\u0142oty he\u0142m", color: "#edc75e", category: "Pancerz" },
+  { id: 146, name: "Z\u0142oty napier\u015Bnik", color: "#edc75e", category: "Pancerz" },
+  { id: 147, name: "Z\u0142ote nogawice", color: "#edc75e", category: "Pancerz" },
+  { id: 148, name: "Z\u0142ote buty", color: "#edc75e", category: "Pancerz" },
+  { id: 149, name: "\u017Belazny he\u0142m", color: "#c9d5d6", category: "Pancerz" },
+  { id: 150, name: "\u017Belazne nogawice", color: "#c9d5d6", category: "Pancerz" },
+  { id: 151, name: "\u017Belazne buty", color: "#c9d5d6", category: "Pancerz" },
+  { id: 152, name: "Diamentowy he\u0142m", color: "#7adace", category: "Pancerz" },
+  { id: 153, name: "Diamentowe nogawice", color: "#7adace", category: "Pancerz" },
+  { id: 154, name: "Diamentowe buty", color: "#7adace", category: "Pancerz" },
+  { id: 155, name: "Z\u0142oty kilof", color: "#edc75e", category: "Narz\u0119dzia" },
+  { id: 156, name: "Z\u0142oty miecz", color: "#edc75e", category: "Narz\u0119dzia" },
+  { id: 157, name: "Z\u0142ota siekiera", color: "#edc75e", category: "Narz\u0119dzia" },
+  { id: 158, name: "Z\u0142ota \u0142opata", color: "#edc75e", category: "Narz\u0119dzia" },
+  { id: 159, name: "Z\u0142ota motyka", color: "#edc75e", category: "Narz\u0119dzia" },
+  { id: 160, name: "Diamentowa siekiera", color: "#7adace", category: "Narz\u0119dzia" },
+  { id: 161, name: "Diamentowa \u0142opata", color: "#7adace", category: "Narz\u0119dzia" },
+  { id: 162, name: "Diamentowa motyka", color: "#7adace", category: "Narz\u0119dzia" },
+  { id: 131, name: "\u017Belazny kilof", color: "#beced2", category: "Narz\u0119dzia" },
+  { id: 132, name: "No\u017Cyce", color: "#ccd5d5", category: "Narz\u0119dzia" },
   { id: 126, name: "Tarcza", color: "#b1c5c9", category: "Pancerz" },
   { id: 127, name: "\u017Belazna siekiera", color: "#c5d3d4", category: "Narz\u0119dzia" },
   { id: 128, name: "Drewniana siekiera", color: "#b68e54", category: "Narz\u0119dzia" },
@@ -174,15 +219,24 @@ var ITEMS = [
   }
 ];
 var RECIPES = [
-  ...[44, 51, 78, 86].flatMap((wood4) => [
-    { out: 112, n: 4, need: [[wood4, 2]] },
-    { out: 28, n: 1, need: [[wood4, 4]] },
-    { out: 61, n: 1, need: [[wood4, 8]] },
+  {
+    out: 131,
+    n: 1,
+    need: [
+      [110, 3],
+      [112, 2]
+    ]
+  },
+  { out: 132, n: 1, need: [[110, 2]] },
+  ...[44, 51, 78, 86].flatMap((wood3) => [
+    { out: 112, n: 4, need: [[wood3, 2]] },
+    { out: 28, n: 1, need: [[wood3, 4]] },
+    { out: 61, n: 1, need: [[wood3, 8]] },
     {
       out: 101,
       n: 1,
       need: [
-        [wood4, 3],
+        [wood3, 3],
         [112, 2]
       ]
     },
@@ -190,7 +244,7 @@ var RECIPES = [
       out: 62,
       n: 1,
       need: [
-        [wood4, 3],
+        [wood3, 3],
         [32, 3]
       ]
     }
@@ -342,6 +396,171 @@ var RECIPES = [
   { out: 34, n: 1, need: [[111, 9]] }
 ];
 
+// lib/mining.ts
+var rule = (hardness, tool = "hand", tier = 0, extra = {}) => ({ hardness, tool, tier, ...extra });
+var untouchable = () => rule(0, "hand", 0, { unbreakable: true });
+var leaf = () => rule(0.2, "hoe", 0, { leaves: true });
+var MINING_RULES = {
+  0: untouchable(),
+  1: rule(0.6, "shovel"),
+  2: rule(0.5, "shovel"),
+  3: rule(1.5, "pickaxe", 1),
+  4: rule(0.5, "shovel"),
+  5: rule(2, "axe"),
+  6: leaf(),
+  7: untouchable(),
+  8: rule(2, "axe"),
+  9: rule(2, "pickaxe", 1),
+  10: rule(0.3, "hand", 0, { noDrop: true }),
+  11: rule(2, "pickaxe", 1),
+  12: rule(50, "pickaxe", 4),
+  13: untouchable(),
+  14: rule(0.4, "pickaxe", 1),
+  15: untouchable(),
+  16: rule(0.3),
+  17: rule(3, "pickaxe", 1),
+  18: untouchable(),
+  19: rule(0.2, "shovel"),
+  20: rule(3, "pickaxe", 1),
+  21: rule(3, "pickaxe", 2),
+  22: rule(3, "pickaxe", 3),
+  23: rule(0.2, "axe"),
+  24: rule(0.2, "axe"),
+  25: rule(2, "axe"),
+  26: leaf(),
+  27: rule(0.8, "pickaxe", 1),
+  28: rule(2.5, "axe"),
+  29: rule(3.5, "pickaxe", 1),
+  30: rule(1.5, "axe"),
+  31: rule(0.8, "shears"),
+  32: rule(0.8, "shears"),
+  33: rule(3, "pickaxe", 3),
+  34: rule(5, "pickaxe", 3),
+  35: rule(1.25, "pickaxe", 1),
+  36: rule(1.5, "pickaxe", 1),
+  37: rule(5, "pickaxe", 3),
+  38: rule(2, "pickaxe", 1),
+  39: rule(0.8, "pickaxe", 1),
+  40: rule(2, "pickaxe", 1),
+  41: rule(0.4),
+  42: rule(0.6, "shovel"),
+  43: rule(2, "axe"),
+  44: rule(2, "axe"),
+  45: rule(0.8, "shears"),
+  46: rule(0.8, "shears"),
+  47: rule(2, "axe"),
+  48: rule(3.5, "pickaxe", 1),
+  49: rule(2, "axe"),
+  50: leaf(),
+  51: rule(2, "axe"),
+  52: rule(2, "axe"),
+  53: leaf(),
+  54: rule(0.5, "shovel"),
+  55: rule(0.5, "shovel"),
+  56: rule(1.25, "pickaxe", 1),
+  57: rule(1.25, "pickaxe", 1),
+  58: rule(1.25, "pickaxe", 1),
+  59: rule(1, "axe"),
+  60: rule(0.5, "pickaxe", 0, { noDrop: true }),
+  61: rule(2.5, "axe"),
+  62: rule(0.2),
+  63: rule(0.6, "shovel"),
+  64: rule(0),
+  65: rule(0),
+  66: rule(0),
+  67: rule(0),
+  68: rule(0),
+  69: rule(0),
+  70: rule(0),
+  71: rule(0.1, "hoe"),
+  72: rule(0),
+  73: rule(1.5, "pickaxe", 1),
+  74: rule(0),
+  75: rule(1.5, "pickaxe", 1),
+  76: rule(2, "axe"),
+  77: leaf(),
+  78: rule(2, "axe"),
+  79: rule(0),
+  80: rule(3, "pickaxe", 2),
+  81: rule(3, "pickaxe", 2),
+  82: rule(3, "pickaxe", 1),
+  83: rule(0.8, "pickaxe", 1),
+  84: rule(4, "pickaxe", 2),
+  85: rule(2, "pickaxe", 1),
+  86: rule(2, "axe"),
+  87: rule(3, "pickaxe", 3),
+  88: rule(3, "pickaxe", 3),
+  89: rule(3, "pickaxe", 2),
+  90: rule(3, "pickaxe", 3),
+  91: rule(3, "pickaxe", 1),
+  92: rule(30, "pickaxe", 4),
+  93: rule(3, "pickaxe", 1),
+  94: rule(5, "pickaxe", 2),
+  95: rule(5, "pickaxe", 1),
+  96: rule(5, "pickaxe", 3),
+  97: rule(3, "pickaxe", 2),
+  98: rule(0.8, "pickaxe", 1),
+  99: rule(50, "pickaxe", 4)
+};
+var TOOL_RULES = {
+  101: { kind: "pickaxe", speed: 2, tier: 1 },
+  102: { kind: "pickaxe", speed: 4, tier: 2 },
+  131: { kind: "pickaxe", speed: 6, tier: 3 },
+  103: { kind: "pickaxe", speed: 8, tier: 4 },
+  128: { kind: "axe", speed: 2, tier: 1 },
+  127: { kind: "axe", speed: 6, tier: 3 },
+  130: { kind: "shovel", speed: 6, tier: 3 },
+  118: { kind: "hoe", speed: 4, tier: 2 },
+  132: { kind: "shears", speed: 5, tier: 0 },
+  104: { kind: "sword", speed: 1.5, tier: 3 },
+  108: { kind: "sword", speed: 1.5, tier: 4 },
+  155: { kind: "pickaxe", speed: 12, tier: 1 },
+  156: { kind: "sword", speed: 1.5, tier: 1 },
+  157: { kind: "axe", speed: 12, tier: 1 },
+  158: { kind: "shovel", speed: 12, tier: 1 },
+  159: { kind: "hoe", speed: 12, tier: 1 },
+  160: { kind: "axe", speed: 8, tier: 4 },
+  161: { kind: "shovel", speed: 8, tier: 4 },
+  162: { kind: "hoe", speed: 8, tier: 4 }
+};
+var hand = { kind: "hand", speed: 1, tier: 0 };
+var toolFor = (held) => TOOL_RULES[held] ?? hand;
+function isMineableBlock(block, y = 1) {
+  return y >= 1 && !!MINING_RULES[block] && !MINING_RULES[block].unbreakable;
+}
+function sufficient(rule2, tool) {
+  return !rule2.tier || tool.kind === rule2.tool && tool.tier >= rule2.tier;
+}
+function harvestAllowed(block, held) {
+  const blockRule = MINING_RULES[block], tool = toolFor(held);
+  return !!blockRule && !blockRule.unbreakable && !blockRule.noDrop && sufficient(blockRule, tool) && (!blockRule.leaves || tool.kind === "shears");
+}
+function miningDuration(block, held) {
+  const blockRule = MINING_RULES[block], tool = toolFor(held);
+  if (!blockRule || blockRule.unbreakable) return Infinity;
+  if (blockRule.hardness === 0 || block === 59 && tool.kind === "sword") return 0;
+  let speed = tool.kind === blockRule.tool ? tool.speed : 1;
+  if (blockRule.leaves && tool.kind === "shears") speed = 15;
+  else if ((blockRule.leaves || blockRule.tool === "shears") && tool.kind === "sword") speed = 1.5;
+  const seconds = blockRule.hardness * (sufficient(blockRule, tool) ? 1.5 : 5) / speed;
+  return Math.max(0.05, Math.ceil((seconds - 1e-10) * 20) / 20);
+}
+function minedResource(block) {
+  const resources = {
+    1: [2, 1],
+    3: [9, 1],
+    20: [109, 1],
+    22: [111, 1],
+    88: [134, 4],
+    89: [135, 5],
+    90: [136, 1],
+    91: [137, 1],
+    93: [133, 1]
+  };
+  const result = resources[block];
+  return result ? { id: result[0], n: result[1] } : { id: block, n: 1 };
+}
+
 // lib/combat.ts
 var bare = { damage: 2, cooldown: 0.48, reach: 3.1, stamina: 10, knockback: 2 };
 var WEAPONS = {
@@ -352,66 +571,258 @@ var WEAPONS = {
   129: { damage: 5, cooldown: 0.88, reach: 4.6, stamina: 22, knockback: 4 },
   101: { damage: 2, cooldown: 0.8, reach: 3.1, stamina: 13, knockback: 2 },
   102: { damage: 3, cooldown: 0.8, reach: 3.1, stamina: 14, knockback: 2.5 },
-  103: { damage: 4, cooldown: 0.8, reach: 3.1, stamina: 15, knockback: 3 }
+  103: { damage: 4, cooldown: 0.8, reach: 3.1, stamina: 15, knockback: 3 },
+  131: { damage: 4, cooldown: 0.8, reach: 3.1, stamina: 15, knockback: 2.8 },
+  132: { damage: 2, cooldown: 0.5, reach: 3.1, stamina: 10, knockback: 1.5 },
+  155: { damage: 2, cooldown: 0.7, reach: 3.1, stamina: 12, knockback: 2 },
+  156: { damage: 4, cooldown: 0.5, reach: 3.6, stamina: 14, knockback: 3 },
+  157: { damage: 7, cooldown: 0.9, reach: 3.2, stamina: 23, knockback: 4, shieldBreak: true },
+  158: { damage: 3, cooldown: 0.85, reach: 3.1, stamina: 13, knockback: 2 },
+  159: { damage: 2, cooldown: 0.5, reach: 3.1, stamina: 10, knockback: 2 },
+  160: { damage: 10, cooldown: 0.95, reach: 3.2, stamina: 28, knockback: 5, shieldBreak: true },
+  161: { damage: 5, cooldown: 0.8, reach: 3.1, stamina: 15, knockback: 3 },
+  162: { damage: 3, cooldown: 0.4, reach: 3.1, stamina: 10, knockback: 2 }
 };
 var weapon = (id) => WEAPONS[id] ?? bare;
-var logs = [5, 25, 43, 47, 49, 52, 76];
-var wood = [...logs, 8, 44, 51, 78, 86, 28, 30, 61, 62];
-var soil = [1, 2, 4, 17, 42, 54, 63];
-var stone = [
-  3,
-  9,
-  12,
-  14,
-  16,
-  20,
-  21,
-  22,
-  23,
-  27,
-  29,
-  35,
-  36,
-  39,
-  40,
-  41,
-  45,
-  55,
-  56,
-  57,
-  58,
-  67,
-  68,
-  69,
-  70,
-  71,
-  72,
-  73,
-  74,
-  75,
-  80,
-  81,
-  83,
-  85
+
+// lib/armor.ts
+var ARMOR_SLOTS = ["head", "chest", "legs", "feet"];
+var sets = [
+  ["leather", [141, 142, 143, 144], [1, 3, 2, 1]],
+  ["gold", [145, 146, 147, 148], [2, 5, 3, 1]],
+  ["iron", [149, 121, 150, 151], [2, 6, 5, 2]],
+  ["diamond", [152, 122, 153, 154], [3, 8, 6, 3]]
 ];
-function miningDuration(block, held) {
-  let seconds = BLOCKS[block]?.hardness ?? 0.7;
-  let speed = 1;
-  if ([101, 102, 103].includes(held) && stone.includes(block))
-    speed = held === 103 ? 6 : held === 102 ? 3.2 : 2;
-  if ([127, 128].includes(held) && wood.includes(block)) speed = held === 127 ? 5 : 2.5;
-  if (held === 130 && soil.includes(block)) speed = 4;
-  if ([104, 108].includes(held) && (BLOCKS[block]?.plant || [6, 26, 46, 50, 53, 77].includes(block)))
-    speed = 1.6;
-  return Math.max(0.08, seconds / speed);
+var definitions = new Map(
+  sets.flatMap(
+    ([material, ids, points]) => ids.map(
+      (id, index) => [id, { material, slot: ARMOR_SLOTS[index], points: points[index] }]
+    )
+  )
+);
+var emptyEquipment = () => ({ head: 0, chest: 0, legs: 0, feet: 0 });
+var armorInfo = (id) => definitions.get(id) ?? null;
+var armorSlot = (id) => armorInfo(id)?.slot ?? null;
+function normalizeEquipment(value, legacyArmor = 0) {
+  const result = emptyEquipment();
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    for (const slot of ARMOR_SLOTS) {
+      const id = value[slot];
+      if (typeof id === "number" && armorSlot(id) === slot) result[slot] = id;
+    }
+  } else if (armorSlot(legacyArmor) === "chest") result.chest = legacyArmor;
+  return result;
+}
+function armorPoints(value) {
+  const equipment = normalizeEquipment(value);
+  return ARMOR_SLOTS.reduce((sum, slot) => sum + (armorInfo(equipment[slot])?.points ?? 0), 0);
+}
+var armorMultiplier = (value) => 1 - Math.min(0.8, armorPoints(value) * 0.04);
+function clickArmorSlot(pack, equipment, slot) {
+  if (!ARMOR_SLOTS.includes(slot)) return false;
+  const held = pack.cursor, worn = equipment[slot];
+  if (held && (held.n !== 1 || armorSlot(held.id) !== slot)) return false;
+  if (!held && !worn) return false;
+  equipment[slot] = held?.id ?? 0;
+  pack.cursor = worn ? { id: worn, n: 1 } : null;
+  return true;
+}
+function equipArmorItem(pack, equipment, id, from, expected) {
+  const slot = armorSlot(id);
+  if (!slot) return false;
+  if (from) {
+    if (from.area !== "slots" && from.area !== "grid" || !Number.isInteger(from.index))
+      return false;
+    const area = pack[from.area], source = area[from.index];
+    if (!source || source.id !== id || source.n !== 1 || expected !== void 0 && (!expected || expected.id !== source.id || expected.n !== source.n))
+      return false;
+    const old = equipment[slot];
+    equipment[slot] = id;
+    area[from.index] = old ? { id: old, n: 1 } : null;
+    return true;
+  }
+  if (pack.cursor?.id === id) return clickArmorSlot(pack, equipment, slot);
+  for (const area of [pack.slots, pack.grid]) {
+    const index = area.findIndex((stack) => stack?.id === id && stack.n === 1);
+    if (index < 0) continue;
+    const old = equipment[slot];
+    equipment[slot] = id;
+    area[index] = old ? { id: old, n: 1 } : null;
+    return true;
+  }
+  return false;
+}
+function migrateEquipment(value, legacyArmor, pack) {
+  if (value && typeof value === "object" && !Array.isArray(value)) return normalizeEquipment(value);
+  const result = emptyEquipment();
+  if (armorSlot(legacyArmor) !== "chest") return result;
+  const take = (stack) => {
+    if (stack?.id !== legacyArmor || stack.n < 1) return false;
+    stack.n--;
+    result.chest = legacyArmor;
+    return true;
+  };
+  if (take(pack.cursor)) {
+    if (!pack.cursor.n) pack.cursor = null;
+    return result;
+  }
+  for (const area of [pack.slots, pack.grid])
+    for (let i = 0; i < area.length; i++) {
+      if (!take(area[i])) continue;
+      if (!area[i].n) area[i] = null;
+      return result;
+    }
+  return result;
 }
 
 // lib/inventory.ts
-var maxStack = (id) => [101, 102, 103, 104, 105, 108, 115, 118, 121, 122, 123, 126, 127, 128, 129, 130].includes(id) ? 1 : id === 114 ? 16 : 64;
-var wood2 = [8, 44, 51, 78, 86];
-var logs2 = [5, 25, 43, 47, 49, 52, 76];
+var maxStack = (id) => [
+  101,
+  102,
+  103,
+  104,
+  105,
+  108,
+  115,
+  118,
+  121,
+  122,
+  123,
+  126,
+  127,
+  128,
+  129,
+  130,
+  131,
+  132
+].includes(id) || id >= 141 && id <= 162 ? 1 : id === 114 ? 16 : 64;
+var wood = [8, 44, 51, 78, 86];
+var logs = [5, 25, 43, 47, 49, 52, 76];
 var planks = [8, 8, 44, 8, 51, 86, 78];
 var GRID_RECIPES = [
+  ...[
+    [140, 141, 142, 143, 144],
+    [133, 145, 146, 147, 148],
+    [110, 149, 121, 150, 151],
+    [111, 152, 122, 153, 154]
+  ].flatMap(([m, head, chest, legs, feet]) => [
+    {
+      name: "He\u0142m",
+      out: head,
+      n: 1,
+      pattern: [
+        [m, m, m],
+        [m, 0, m]
+      ]
+    },
+    {
+      name: "Napier\u015Bnik",
+      out: chest,
+      n: 1,
+      pattern: [
+        [m, 0, m],
+        [m, m, m],
+        [m, m, m]
+      ]
+    },
+    {
+      name: "Nogawice",
+      out: legs,
+      n: 1,
+      pattern: [
+        [m, m, m],
+        [m, 0, m],
+        [m, 0, m]
+      ]
+    },
+    {
+      name: "Buty",
+      out: feet,
+      n: 1,
+      pattern: [
+        [m, 0, m],
+        [m, 0, m]
+      ]
+    }
+  ]),
+  ...[
+    [133, 155, 156, 157, 158, 159],
+    [111, 103, 108, 160, 161, 162]
+  ].flatMap(([m, pick, sword, axe, shovel, hoe]) => [
+    {
+      name: "Kilof",
+      out: pick,
+      n: 1,
+      pattern: [
+        [m, m, m],
+        [0, 112, 0],
+        [0, 112, 0]
+      ]
+    },
+    { name: "Miecz", out: sword, n: 1, pattern: [[m], [m], [112]] },
+    {
+      name: "Siekiera",
+      out: axe,
+      n: 1,
+      pattern: [
+        [m, m],
+        [m, 112],
+        [0, 112]
+      ]
+    },
+    { name: "\u0141opata", out: shovel, n: 1, pattern: [[m], [112], [112]] },
+    {
+      name: "Motyka",
+      out: hoe,
+      n: 1,
+      pattern: [
+        [m, m],
+        [0, 112],
+        [0, 112]
+      ]
+    }
+  ]),
+  ...[
+    [133, 33],
+    [110, 94],
+    [109, 95],
+    [134, 96],
+    [135, 97],
+    [111, 34],
+    [136, 37],
+    [139, 99]
+  ].flatMap(([m, block]) => [
+    {
+      name: "Blok surowca",
+      out: block,
+      n: 1,
+      pattern: [
+        [m, m, m],
+        [m, m, m],
+        [m, m, m]
+      ]
+    },
+    { name: "Roz\u0142\xF3\u017C blok", out: m, n: 9, pattern: [[block]] }
+  ]),
+  {
+    name: "Blok kwarcu",
+    out: 98,
+    n: 1,
+    pattern: [
+      [137, 137],
+      [137, 137]
+    ]
+  },
+  {
+    name: "Sztabka netherytu",
+    out: 139,
+    n: 1,
+    pattern: [
+      [138, 138, 133],
+      [138, 138, 133],
+      [133, 133, 0]
+    ]
+  },
   {
     name: "Tarcza",
     out: 126,
@@ -453,7 +864,16 @@ var GRID_RECIPES = [
     ]
   },
   { name: "\u0141opata", out: 130, n: 1, pattern: [[110], [112], [112]] },
-  ...logs2.map((id, i) => ({
+  {
+    name: "No\u017Cyce",
+    out: 132,
+    n: 1,
+    pattern: [
+      [0, 110],
+      [110, 0]
+    ]
+  },
+  ...logs.map((id, i) => ({
     name: "Deski",
     out: planks[i],
     n: 4,
@@ -469,12 +889,12 @@ var GRID_RECIPES = [
       [-1, -1]
     ]
   },
-  ...[101, 102, 103].map((id, i) => ({
+  ...[101, 102, 131, 103].map((id, i) => ({
     name: "Kilof",
     out: id,
     n: 1,
     pattern: [
-      [[-1, 9, 111][i], [-1, 9, 111][i], [-1, 9, 111][i]],
+      [[-1, 9, 110, 111][i], [-1, 9, 110, 111][i], [-1, 9, 110, 111][i]],
       [0, 112, 0],
       [0, 112, 0]
     ]
@@ -578,7 +998,7 @@ var GRID_RECIPES = [
     pattern: Array.from({ length: 3 }, () => [id, id, id])
   }))
 ];
-var matches = (id, token) => token === -1 ? wood2.includes(id) : id === token;
+var matches = (id, token) => token === -1 ? wood.includes(id) : id === token;
 var InventoryPack = class {
   slots = Array(36).fill(null);
   grid = Array(9).fill(null);
@@ -802,7 +1222,7 @@ var InventoryPack = class {
           line.push(0);
           continue;
         }
-        const id = token === -1 ? wood2.find((id2) => (available[id2] ?? 0) > 0) ?? (creative ? 8 : 0) : token;
+        const id = token === -1 ? wood.find((id2) => (available[id2] ?? 0) > 0) ?? (creative ? 8 : 0) : token;
         if (!id || !creative && !(available[id] > 0)) return false;
         available[id] = (available[id] ?? 0) - 1;
         line.push(id);
@@ -880,16 +1300,20 @@ function clickStack(slot, cursor, right = false) {
 var FURNACE_RECIPES = [
   { input: 21, output: 110, seconds: 10 },
   { input: 80, output: 120, seconds: 10 },
+  { input: 87, output: 133, seconds: 10 },
+  { input: 92, output: 138, seconds: 10 },
+  { input: 93, output: 133, seconds: 10 },
+  { input: 91, output: 137, seconds: 10 },
   { input: 4, output: 10, seconds: 10 },
   { input: 9, output: 3, seconds: 10 }
 ];
-var wood3 = /* @__PURE__ */ new Set([5, 8, 25, 43, 44, 47, 49, 51, 52, 76, 78, 86]);
+var wood2 = /* @__PURE__ */ new Set([5, 8, 25, 43, 44, 47, 49, 51, 52, 76, 78, 86]);
 var knownItem = (id) => Number.isInteger(id) && id > 0 && (!!BLOCKS[id] || ITEMS.some((item) => item.id === id));
 function furnaceRecipe(id) {
   return FURNACE_RECIPES.find((recipe) => recipe.input === id) ?? null;
 }
 function furnaceFuelSeconds(id) {
-  return id === 109 ? 80 : id === 112 ? 5 : wood3.has(id) ? 15 : 0;
+  return id === 109 ? 80 : id === 112 ? 5 : wood2.has(id) ? 15 : 0;
 }
 function canInsertFurnaceSlot(index, id) {
   return index === 0 ? knownItem(id) : index === 1 && furnaceFuelSeconds(id) > 0;
@@ -1489,9 +1913,15 @@ var World = class {
           else if (y > h)
             id = this.dimension === "overworld" ? 7 : this.dimension === "nether" ? 15 : 0;
           else if (this.dimension === "end") id = 17;
-          else if (this.dimension === "nether")
+          else if (this.dimension === "nether") {
             id = y === h && hash2(wx, wz, this.seed) > 0.91 ? 15 : 14;
-          else if (y === h) id = h < WATER && biome.id !== "swamp" ? 4 : biome.surface;
+            if (id === 14 && y < h - 1) {
+              const ore = hash2(wx + y * 57, wz - y * 91, this.seed + 733);
+              if (y < 12 && ore > 0.9985) id = 92;
+              else if (ore > 0.965) id = 91;
+              else if (ore > 0.944) id = 93;
+            }
+          } else if (y === h) id = h < WATER && biome.id !== "swamp" ? 4 : biome.surface;
           else if (y > h - 4)
             id = biome.id === "desert" ? 4 : biome.id === "badlands" ? [56, 57, 58][y % 3] : biome.id === "swamp" ? 54 : 2;
           else {
@@ -1501,6 +1931,10 @@ var World = class {
             else if (r > 0.947) id = 21;
             else if (r > 0.937) id = 80;
             else if (r > 0.929 && y < 11) id = 22;
+            else if (r > 0.916 && r <= 0.929 && (y < 16 || biome.id === "badlands")) id = 87;
+            else if (r > 0.902 && r <= 0.916 && y < 12) id = 88;
+            else if (r > 0.894 && r <= 0.902 && y < 20) id = 89;
+            else if (r > 0.89 && r <= 0.894 && y > 6) id = 90;
             if (y > 2 && y < h - 4 && noise(wx / 10 + y * 0.14, wz / 10 - y * 0.14, this.seed + 3) > 0.69)
               id = 0;
           }
@@ -1596,9 +2030,9 @@ var World = class {
           continue;
         const y = this.height(x, z) + 1;
         if (b2.id === "desert" || b2.id === "jungle") {
-          const stone2 = b2.id === "desert" ? 27 : 40;
+          const stone = b2.id === "desert" ? 27 : 40;
           for (let h = 0; h < 6; h++)
-            box(x - 7 + h, y + h, z - 7 + h, 15 - h * 2, 1, 15 - h * 2, stone2);
+            box(x - 7 + h, y + h, z - 7 + h, 15 - h * 2, 1, 15 - h * 2, stone);
           box(x - 3, y, z - 3, 7, 3, 7, 0);
           box(x - 1, y, z + 3, 3, 2, 5, 0);
           put(x, y, z, 61);
@@ -1639,12 +2073,12 @@ var World = class {
           put(x - 2, y - 3, z - 2, 80);
           put(x, y + 1, z, 48);
         } else {
-          const stone2 = b2.id === "ocean" ? 85 : b2.id === "snow" ? 60 : 40, base = b2.id === "ocean" ? 13 : y;
+          const stone = b2.id === "ocean" ? 85 : b2.id === "snow" ? 60 : 40, base = b2.id === "ocean" ? 13 : y;
           box(x - 3, base - 1, z - 3, 7, 1, 7, 9);
           for (let h = 0; h < 11; h++)
             for (let a = -2; a <= 2; a++)
               for (let e = -2; e <= 2; e++)
-                if (a === -2 || a === 2 || e === -2 || e === 2) put(x + a, base + h, z + e, stone2);
+                if (a === -2 || a === 2 || e === -2 || e === 2) put(x + a, base + h, z + e, stone);
           box(x - 1, base, z + 2, 2, 3, 1, 0);
           box(x - 3, base + 10, z - 3, 7, 1, 7, 8);
           box(x - 1, base + 11, z - 1, 3, 2, 3, 10);
@@ -1655,8 +2089,7 @@ var World = class {
       }
   }
   ruinLocation() {
-    const angle = hash2(this.seed, 9, 331) * Math.PI * 2, r = 210 + Math.floor(hash2(this.seed, 7, 813) * 110);
-    const x = Math.round(Math.cos(angle) * r), z = Math.round(Math.sin(angle) * r);
+    const x = -18, z = 12;
     return { x, z, y: this.height(x, z) + 1 };
   }
   structures(c) {
@@ -1789,6 +2222,41 @@ var World = class {
     const height = this.get(x, iy + 1, z) === 7 || level === 8 ? 1 : 0.88 - level * 0.095;
     return y - iy < height;
   }
+  /** All current lava blocks are sources: water touching their top or sides forms obsidian. */
+  coolLava(x, y, z) {
+    if (this.get(x, y, z) !== 15) return false;
+    for (const [dx, dy, dz] of [
+      [0, 1, 0],
+      [1, 0, 0],
+      [-1, 0, 0],
+      [0, 0, 1],
+      [0, 0, -1]
+    ])
+      if (this.get(x + dx, y + dy, z + dz) === 7) {
+        this.set(x, y, z, 12);
+        return true;
+      }
+    return false;
+  }
+  /** A bucket aimed directly at lava pours onto its exposed surface instead of deleting the lava. */
+  pourWater(x, y, z) {
+    if (![x, y, z].every(Number.isInteger) || y < 1 || y >= HEIGHT - 1 || this.dimension === "nether")
+      return false;
+    while (this.get(x, y, z) === 15 && y < HEIGHT - 1) y++;
+    const existing = this.get(x, y, z);
+    if (y >= HEIGHT - 1 || existing !== 0 && existing !== 7 && !BLOCKS[existing]?.plant)
+      return false;
+    this.set(x, y, z, 7);
+    for (const [dx, dy, dz] of [
+      [0, -1, 0],
+      [1, 0, 0],
+      [-1, 0, 0],
+      [0, 0, 1],
+      [0, 0, -1]
+    ])
+      this.coolLava(x + dx, y + dy, z + dz);
+    return true;
+  }
   solid(x, y, z) {
     return !!BLOCKS[this.get(x, y, z)]?.solid;
   }
@@ -1850,6 +2318,10 @@ var FluidSystem = class {
   update(x, y, z) {
     const w = this.world, id = w.get(x, y, z), level = this.level(x, y, z);
     if (id !== 0 && id !== 7 && id !== 15 && !BLOCKS[id]?.plant) return;
+    if (id === 15) {
+      w.coolLava(x, y, z);
+      return;
+    }
     if (id === 7) {
       for (const [dx, dy, dz] of [
         [1, 0, 0],
@@ -1858,7 +2330,7 @@ var FluidSystem = class {
         [0, 0, -1],
         [0, -1, 0]
       ])
-        if (w.get(x + dx, y + dy, z + dz) === 15) w.set(x + dx, y + dy, z + dz, 12);
+        w.coolLava(x + dx, y + dy, z + dz);
       if (level === 0) return;
     }
     let desired = -1;
@@ -1881,10 +2353,6 @@ var FluidSystem = class {
       }
       if (sources >= 2 && w.solid(x, y - 1, z)) desired = 0;
     }
-    if (id === 15) {
-      if (desired >= 0) w.set(x, y, z, 3);
-      return;
-    }
     if (level === desired) return;
     const stateKey = this.key(x, y, z);
     if (desired >= 0) {
@@ -1900,6 +2368,18 @@ var FluidSystem = class {
 
 // lib/entities.ts
 import * as THREE from "three";
+
+// lib/dragon-balance.ts
+var DRAGON_MAX_HEALTH = 600;
+var DRAGON_ENRAGED_HEALTH = DRAGON_MAX_HEALTH * 0.5;
+function restoreDragonHealth(hp, previousMax = 300, defeated = false) {
+  if (defeated) return 0;
+  if (typeof hp !== "number" || !Number.isFinite(hp)) return DRAGON_MAX_HEALTH;
+  const maximum = typeof previousMax === "number" && Number.isFinite(previousMax) && previousMax > 0 ? previousMax : 300;
+  return Math.max(0, Math.min(DRAGON_MAX_HEALTH, hp / maximum * DRAGON_MAX_HEALTH));
+}
+
+// lib/entities.ts
 var cubeGeo = new THREE.BoxGeometry(1, 1, 1);
 var materialCache = /* @__PURE__ */ new Map();
 function mat(color, glow = false) {
@@ -1974,7 +2454,7 @@ var Mob = class {
   flying = false;
   make() {
     const k = this.kind, g = this.group;
-    const eye = (x, y, z, color = "#202428") => {
+    const eye2 = (x, y, z, color = "#202428") => {
       const m = cube(g, color, x, y, z, 0.085, 0.09, 0.018, k === "enderman");
       this.eyes.push(m);
       return m;
@@ -1983,8 +2463,8 @@ var Mob = class {
       cube(g, "#e8b647", 0, 0.45, 0, 0.65, 0.55, 0.9);
       for (const z of [-0.22, 0.14]) cube(g, "#574838", 0, 0.45, z, 0.67, 0.57, 0.16);
       cube(g, "#efc65c", 0, 0.5, -0.51, 0.62, 0.53, 0.28);
-      eye(-0.2, 0.54, -0.66);
-      eye(0.2, 0.54, -0.66);
+      eye2(-0.2, 0.54, -0.66);
+      eye2(0.2, 0.54, -0.66);
       for (const side of [-1, 1]) {
         this.wings.push(cube(g, "#dff6f1", side * 0.48, 0.77, 0, 0.65, 0.045, 0.57));
         cube(g, "#493b2b", side * 0.16, 0.9, -0.51, 0.045, 0.36, 0.045);
@@ -1999,7 +2479,7 @@ var Mob = class {
       cube(g, "#d9d69c", 0, 0.35, -0.52, 0.56, 0.12, 0.02);
       for (const side of [-1, 1]) {
         cube(g, "#98ae54", side * 0.27, 0.78, -0.35, 0.24, 0.2, 0.25);
-        eye(side * 0.27, 0.8, -0.482);
+        eye2(side * 0.27, 0.8, -0.482);
         for (const z of [-0.28, 0.3])
           this.legs.push(cube(g, "#738b3f", side * 0.38, 0.12, z, 0.28, 0.18, 0.38));
       }
@@ -2011,7 +2491,7 @@ var Mob = class {
       cube(g, "#ead9ba", 0, 0.66, -0.91, 0.42, 0.19, 0.24);
       cube(g, "#433329", 0, 0.7, -1.05, 0.15, 0.12, 0.1);
       for (const side of [-1, 1]) {
-        eye(side * 0.16, 0.88, -0.88);
+        eye2(side * 0.16, 0.88, -0.88);
         cube(g, "#da843d", side * 0.2, 1.2, -0.56, 0.18, 0.32, 0.2);
         cube(g, "#463426", side * 0.2, 1.34, -0.57, 0.15, 0.08, 0.16);
         for (const z of [-0.34, 0.35])
@@ -2034,8 +2514,8 @@ var Mob = class {
           this.legs.push(
             cube(g, k === "pig" ? "#c48880" : "#837969", x, 0.28, z, 0.22, 0.56, 0.23)
           );
-      eye(-0.16, 1.16, -1);
-      eye(0.16, 1.16, -1);
+      eye2(-0.16, 1.16, -1);
+      eye2(0.16, 1.16, -1);
       if (k === "pig") cube(g, "#c8797c", 0, 0.98, -1.03, 0.28, 0.19, 0.13);
       if (k === "cow") {
         cube(g, "#e8dfc9", 0.15, 0.98, -0.1, 0.59, 0.45, 0.7);
@@ -2058,13 +2538,13 @@ var Mob = class {
       this.size = 1.8;
     } else if (k === "slime") {
       cube(g, "#80b76d", 0, 0.65, 0, 1.3, 1.3, 1.3);
-      eye(-0.28, 0.86, -0.66);
-      eye(0.28, 0.86, -0.66);
+      eye2(-0.28, 0.86, -0.66);
+      eye2(0.28, 0.86, -0.66);
       cube(g, "#263c27", 0, 0.48, -0.66, 0.36, 0.12, 0.02);
     } else if (k === "blaze") {
       cube(g, "#dcb644", 0, 1.5, 0, 0.7, 0.6, 0.6, true);
-      eye(-0.18, 1.65, -0.31);
-      eye(0.18, 1.65, -0.31);
+      eye2(-0.18, 1.65, -0.31);
+      eye2(0.18, 1.65, -0.31);
       for (let i = 0; i < 8; i++) {
         const a = i / 8 * Math.PI * 2;
         this.legs.push(
@@ -2113,8 +2593,8 @@ var Mob = class {
         if (k === "zombie") arm.rotation.x = -1.35;
         this.legs.push(arm);
       }
-      eye(-0.17, end ? 2.37 : 2, -0.3, end ? "#bf77ff" : "#292d26");
-      eye(0.17, end ? 2.37 : 2, -0.3, end ? "#bf77ff" : "#292d26");
+      eye2(-0.17, end ? 2.37 : 2, -0.3, end ? "#bf77ff" : "#292d26");
+      eye2(0.17, end ? 2.37 : 2, -0.3, end ? "#bf77ff" : "#292d26");
       if (k === "piglin") cube(g, "#d1b192", 0, 1.8, -0.36, 0.31, 0.2, 0.19);
       if (k === "skeleton") cube(g, "#6f5234", -0.6, 1.2, -0.25, 0.08, 0.8, 0.12);
     }
@@ -2331,7 +2811,8 @@ var Dragon = class {
   jaw = null;
   radius = 27;
   deathTime = 0;
-  hp = 300;
+  hp = DRAGON_MAX_HEALTH;
+  orbit = 0;
   time = 0;
   shot = 0;
   dead = false;
@@ -2422,21 +2903,22 @@ var Dragon = class {
     }
     this.time += dt;
     this.shot -= dt;
-    const t = this.time, phase = t % 24;
-    this.hp = Math.min(300, this.hp + crystals * 0.12 * dt);
-    const swoop = phase > 17;
+    const t = this.time, enraged = this.hp <= DRAGON_ENRAGED_HEALTH, phase = t % (enraged ? 17 : 21), angularSpeed = enraged ? 0.3 : 0.26;
+    this.orbit += dt * angularSpeed;
+    this.hp = Math.min(DRAGON_MAX_HEALTH, this.hp + Math.max(0, Math.min(8, crystals)) * 0.4 * dt);
+    const swoop = phase > (enraged ? 10 : 14);
     this.radius = THREE.MathUtils.lerp(this.radius, swoop ? 12 : 27, 1 - Math.exp(-dt * 1.4));
     const radius = this.radius;
     this.group.position.set(
-      Math.cos(t * 0.22) * radius,
+      Math.cos(this.orbit) * radius,
       THREE.MathUtils.lerp(
         this.group.position.y,
         swoop ? 23 : 33 + Math.sin(t * 0.5) * 4,
         1 - Math.exp(-dt * 1.7)
       ),
-      Math.sin(t * 0.22) * radius
+      Math.sin(this.orbit) * radius
     );
-    this.group.rotation.y = -t * 0.22;
+    this.group.rotation.y = -this.orbit;
     this.group.rotation.z = -0.13 + Math.sin(t * 0.55) * 0.09;
     this.group.rotation.x = swoop ? 0.08 + Math.sin(t) * 0.06 : Math.sin(t * 0.8) * 0.04;
     this.neck.rotation.x = Math.sin(t * 1.8) * 0.08 + (swoop ? 0.12 : 0);
@@ -2456,8 +2938,17 @@ var Dragon = class {
       p.rotation.x = Math.sin(t * 1.3 - i * 0.3) * 0.07;
     });
     if (this.shot < 0 && this.group.position.distanceTo(player) < 70) {
-      shoot(this.group.position.clone());
-      this.shot = crystals ? 3.3 : 1.9;
+      const origin = this.group.localToWorld(new THREE.Vector3(0, 0, -6));
+      const target = player.clone().add(new THREE.Vector3(0, 1, 0));
+      const side = target.clone().sub(origin).cross(new THREE.Vector3(0, 1, 0)).normalize();
+      for (const offset of enraged ? [-2.8, 0, 2.8] : [0, Math.sin(t) > 0 ? 2.8 : -2.8])
+        shoot(
+          origin.clone(),
+          enraged ? 7 : 6,
+          enraged ? 17 : 15,
+          target.clone().addScaledVector(side, offset)
+        );
+      this.shot = enraged ? 1.45 : crystals ? 2.6 : 1.9;
     }
   }
 };
@@ -2562,15 +3053,15 @@ var HorrorDirector = class {
   tick(dt, contexts) {
     dt = Math.max(0, Math.min(1, Number.isFinite(dt) ? dt : 0));
     this.elapsed += dt;
-    const events = [], eligible = contexts.filter(
+    const events = [], eligible2 = contexts.filter(
       (c) => normalizeDifficulty(c.difficulty) === "horror" && c.active && c.alive
-    ), byId = new Map(eligible.map((c) => [c.id, c]));
+    ), byId = new Map(eligible2.map((c) => [c.id, c]));
     for (const [key, event] of this.activeEvents) {
       const viewers = event.viewerIds.filter((id) => byId.get(id)?.dimension === event.dimension);
-      const looked = visual(event.kind) && this.elapsed - event.at > 0.2 && viewers.some((id) => {
+      const looked = visual(event.kind) && this.elapsed - event.at > (event.reason === "passive-watch" ? 0.8 : 0.2) && viewers.some((id) => {
         const c = byId.get(id), dx = event.p[0] - c.p[0], dy = event.p[1] + 1.6 - (c.p[1] + 1.5), dz = event.p[2] - c.p[2];
         const length = Math.hypot(dx, dy, dz);
-        return length > 0 && (-Math.sin(c.yaw) * Math.cos(c.pitch) * dx + Math.sin(c.pitch) * dy - Math.cos(c.yaw) * Math.cos(c.pitch) * dz) / length > 0.94;
+        return length > 0 && (-Math.sin(c.yaw) * Math.cos(c.pitch) * dx + Math.sin(c.pitch) * dy - Math.cos(c.yaw) * Math.cos(c.pitch) * dz) / length > (event.reason === "passive-watch" ? 0.99 : 0.94);
       });
       if (!viewers.length || looked || this.elapsed - event.at >= event.duration) {
         this.activeEvents.delete(key);
@@ -2587,15 +3078,44 @@ var HorrorDirector = class {
           });
       }
     }
-    for (const c of eligible) {
+    for (const c of eligible2) {
       const s = this.progress(c.id);
       s.age += dt;
       const alone = !contexts.some(
         (q) => q.id !== c.id && q.active && q.alive && q.dimension === c.dimension && distance(q.p, c.p) < 24
       ), risk = 1 + Number(c.night) * 0.35 + Number(c.underground) * 0.45 + Number(alone) * 0.3;
       s.tension = Math.min(1, s.tension + dt * risk / 300);
+      if (s.stage >= 3 && s.stage <= 5 && s.age < s.nextAt - 18) {
+        s.nextWatch ??= s.age + 17 + this.random(s) * 9;
+        const busy = [...this.activeEvents.values()].some(
+          (event2) => event2.viewerIds.includes(c.id)
+        );
+        if (!busy && s.age >= s.nextWatch) {
+          const angle2 = c.yaw + (this.random(s) > 0.5 ? 1 : -1) * (0.5 + this.random(s) * 0.35), range2 = 26 + this.random(s) * 10, p2 = [c.p[0] - Math.sin(angle2) * range2, c.p[1], c.p[2] - Math.cos(angle2) * range2], viewers2 = eligible2.filter(
+            (q) => q.dimension === c.dimension && distance(q.p, c.p) < 18 && ![...this.activeEvents.values()].some((event3) => event3.viewerIds.includes(q.id))
+          ), event2 = {
+            id: "h" + ++this.sequence,
+            kind: "watcher",
+            p: p2,
+            at: this.elapsed,
+            duration: 12 + this.random(s) * 5,
+            intensity: 0.24 + this.random(s) * 0.08,
+            seed: Math.floor(this.random(s) * 2147483647),
+            reason: "passive-watch",
+            viewerIds: viewers2.map((q) => q.id),
+            dimension: c.dimension,
+            yaw: Math.atan2(c.p[0] - p2[0], c.p[2] - p2[2])
+          };
+          events.push(event2);
+          this.activeEvents.set(event2.id, event2);
+          for (const q of viewers2) {
+            const state = this.progress(q.id);
+            state.nextWatch = state.age + 38 + this.random(state) * 24;
+          }
+        }
+      }
       if (s.age < s.nextAt) continue;
-      const kind = stages[s.stage], peers = visual(kind) ? eligible.filter(
+      const kind = stages[s.stage], peers = visual(kind) ? eligible2.filter(
         (q) => q.dimension === c.dimension && distance(q.p, c.p) < 18 && this.progress(q.id).stage === s.stage && this.progress(q.id).age >= minimum[s.stage]
       ) : [c], viewers = peers.length ? peers : [c], angle = c.yaw + (kind === "watcher" ? 0.75 : kind === "silhouette" ? 1.35 : Math.PI + 0.25), range = kind === "watcher" ? 20 + this.random(s) * 8 : kind === "silhouette" ? 9 : kind === "approach" ? 3.8 : kind === "jumpscare" ? 1.4 : 5, p = [c.p[0] - Math.sin(angle) * range, c.p[1], c.p[2] - Math.cos(angle) * range], event = {
         id: "h" + ++this.sequence,
@@ -2620,6 +3140,7 @@ var HorrorDirector = class {
           state.tension = 0.1;
           state.cycle++;
           state.nextAt = 90 + this.random(state) * 30;
+          delete state.nextWatch;
         } else {
           state.stage++;
           const wait = kind === "jumpscare" ? 1.8 : (30 + this.random(state) * 25) / Math.min(1.3, risk);
@@ -2660,7 +3181,8 @@ var HorrorDirector = class {
         tension: Math.max(0, Math.min(1, s.tension)),
         nextAt: Math.max(age + 30, s.nextAt),
         cycle: Math.max(0, Math.floor(s.cycle)),
-        random: s.random >>> 0
+        random: s.random >>> 0,
+        ...Number.isFinite(s.nextWatch) ? { nextWatch: Math.max(age + 15, Number(s.nextWatch)) } : {}
       });
     }
   }
@@ -2677,9 +3199,9 @@ function placeHorrorEvent(event, anchor, underground, world, ensure = () => {
           if (world.solid(x + dx2, y + height, z + dz2) || [7, 15].includes(world.get(x + dx2, y + height, z + dz2)))
             return false;
     const dx = x - anchor[0], dy = y + 1.7 - (anchor[1] + 1.5), dz = z - anchor[2];
-    const distance2 = Math.hypot(dx, dy, dz);
-    for (let step = 0.15; step < distance2; step += 0.15) {
-      const fraction = step / distance2;
+    const distance3 = Math.hypot(dx, dy, dz);
+    for (let step = 0.15; step < distance3; step += 0.15) {
+      const fraction = step / distance3;
       if (world.solid(
         anchor[0] + dx * fraction,
         anchor[1] + 1.5 + dy * fraction,
@@ -2715,9 +3237,352 @@ function placeHorrorEvent(event, anchor, underground, world, ensure = () => {
   return false;
 }
 
+// lib/horror-hunt.ts
+var distance2 = (a, b2) => Math.hypot(a[0] - b2[0], a[1] - b2[1], a[2] - b2[2]);
+var eye = (p, height = 1.5) => [p[0], p[1] + height, p[2]];
+var terminal = (phase) => phase === "escaped" || phase === "banished";
+var eligible = (player) => normalizeDifficulty(player.difficulty) === "horror" && player.alive;
+var miss = { ok: false, damage: 0, banished: false };
+var HorrorHunt = class {
+  elapsed = 0;
+  sequence = 0;
+  hunts = /* @__PURE__ */ new Map();
+  safeUntil = /* @__PURE__ */ new Map();
+  signals = [];
+  random(hunt) {
+    hunt.random = Math.imul(hunt.random, 1664525) + 1013904223 >>> 0;
+    return hunt.random / 4294967296;
+  }
+  wire(hunt) {
+    return {
+      id: hunt.id,
+      dimension: hunt.dimension,
+      p: [...hunt.p],
+      yaw: hunt.yaw,
+      phase: hunt.phase,
+      hp: hunt.hp,
+      maxHp: hunt.maxHp,
+      targetId: hunt.targetId,
+      viewerIds: [...hunt.viewerIds],
+      at: this.elapsed,
+      phaseAt: hunt.phaseAt,
+      phaseDuration: hunt.phaseDuration,
+      seed: hunt.seed,
+      ...hunt.lungeTo ? { lungeTo: [...hunt.lungeTo] } : {},
+      hurt: Math.max(0, Math.min(1, (hunt.hurtUntil - this.elapsed) / 0.22))
+    };
+  }
+  view(playerId) {
+    return [...this.hunts.values()].filter((hunt) => hunt.viewerIds.includes(playerId)).map((hunt) => this.wire(hunt));
+  }
+  reset(playerId) {
+    for (const [id, hunt] of this.hunts) {
+      if (hunt.targetId === playerId) this.hunts.delete(id);
+      else hunt.viewerIds = hunt.viewerIds.filter((viewer) => viewer !== playerId);
+    }
+    this.signals = this.signals.filter(
+      (signal) => signal.type === "ended" ? !signal.hunt.viewerIds.includes(playerId) : signal.playerId !== playerId
+    );
+  }
+  start(trigger, players, env) {
+    const rested = (id) => (this.safeUntil.get(id) ?? 0) <= this.elapsed;
+    const target = players.find(
+      (player) => trigger.viewerIds.includes(player.id) && eligible(player) && player.active && player.dimension === trigger.dimension && rested(player.id)
+    );
+    if (!target || this.view(target.id).length) return null;
+    let position = null;
+    for (const offset of [Math.PI + 0.6, Math.PI - 0.6, 1.5, -1.5, 0.6]) {
+      const angle = target.yaw + offset, candidate = [
+        target.p[0] - Math.sin(angle) * 16,
+        target.p[1],
+        target.p[2] - Math.cos(angle) * 16
+      ];
+      const placed = env.place(candidate, target.p, target.dimension);
+      if (placed && distance2(placed, target.p) >= 10 && distance2(placed, target.p) <= 30) {
+        position = placed;
+        break;
+      }
+    }
+    if (!position) return null;
+    const viewers = players.filter(
+      (player) => eligible(player) && player.active && player.dimension === target.dimension && distance2(player.p, target.p) <= 24 && !this.view(player.id).length && rested(player.id)
+    ).map((player) => player.id);
+    const hunt = {
+      id: "hunt-" + ++this.sequence,
+      dimension: target.dimension,
+      p: position,
+      yaw: Math.atan2(target.p[0] - position[0], target.p[2] - position[2]),
+      phase: "telegraph",
+      hp: 140,
+      maxHp: 140,
+      targetId: target.id,
+      viewerIds: viewers,
+      at: this.elapsed,
+      phaseAt: this.elapsed,
+      phaseDuration: 6,
+      seed: trigger.seed,
+      started: this.elapsed,
+      lost: 0,
+      far: 0,
+      nextBlink: this.elapsed + 9,
+      blinks: 0,
+      lungeFrom: [...position],
+      random: trigger.seed >>> 0,
+      hurtUntil: 0,
+      lastHits: /* @__PURE__ */ new Map()
+    };
+    this.hunts.set(hunt.id, hunt);
+    return this.wire(hunt);
+  }
+  phase(hunt, phase, duration) {
+    hunt.phase = phase;
+    hunt.phaseAt = this.elapsed;
+    hunt.phaseDuration = duration;
+    if (phase !== "lungeTell" && phase !== "lunge") delete hunt.lungeTo;
+  }
+  end(hunt, reason) {
+    if (terminal(hunt.phase)) return;
+    this.phase(hunt, reason, 2.5);
+    for (const id of hunt.viewerIds)
+      this.safeUntil.set(id, this.elapsed + (reason === "banished" ? 180 : 90));
+    this.signals.push({ type: "ended", hunt: this.wire(hunt), reason });
+  }
+  looking(player, p) {
+    const from = eye(player.p), to = eye(p, 1.8), length = distance2(from, to);
+    return length > 0 && (-Math.sin(player.yaw) * Math.cos(player.pitch) * (to[0] - from[0]) + Math.sin(player.pitch) * (to[1] - from[1]) - Math.cos(player.yaw) * Math.cos(player.pitch) * (to[2] - from[2])) / length > 0.5;
+  }
+  catch(hunt, target) {
+    this.phase(hunt, "caught", 1.3);
+    this.signals.push({ type: "caught", playerId: target.id, hunt: this.wire(hunt) });
+  }
+  tick(dt, players, env) {
+    dt = Math.max(0, Math.min(0.25, Number.isFinite(dt) ? dt : 0));
+    this.elapsed += dt;
+    for (const [id, until] of this.safeUntil) if (until <= this.elapsed) this.safeUntil.delete(id);
+    for (const [id, hunt] of this.hunts) {
+      if (terminal(hunt.phase)) {
+        if (this.elapsed - hunt.phaseAt >= hunt.phaseDuration) this.hunts.delete(id);
+        continue;
+      }
+      hunt.viewerIds = hunt.viewerIds.filter(
+        (viewer) => players.some(
+          (player) => player.id === viewer && eligible(player) && player.dimension === hunt.dimension
+        )
+      );
+      const target = players.find(
+        (player) => player.id === hunt.targetId && eligible(player) && player.dimension === hunt.dimension
+      );
+      if (!target || !hunt.viewerIds.length) {
+        this.end(hunt, "escaped");
+        continue;
+      }
+      if (!target.active && hunt.phase !== "caught") {
+        hunt.phaseAt += dt;
+        hunt.started += dt;
+        hunt.nextBlink += dt;
+        continue;
+      }
+      const phaseTime = this.elapsed - hunt.phaseAt;
+      if (hunt.phase === "caught") {
+        if (phaseTime + 1e-6 >= 1.3) {
+          this.signals.push({ type: "death", playerId: target.id, huntId: hunt.id });
+          this.phase(hunt, "escaped", 2.5);
+        }
+        continue;
+      }
+      const range = distance2(hunt.p, target.p), clear = env.lineClear(eye(hunt.p, 1.8), eye(target.p), hunt.dimension);
+      hunt.lost = clear ? 0 : hunt.lost + dt;
+      hunt.far = range > 36 ? hunt.far + dt : 0;
+      if (hunt.lost >= 4 || hunt.far >= 2.5 || this.elapsed - hunt.started >= 75) {
+        this.end(hunt, "escaped");
+        continue;
+      }
+      hunt.yaw = Math.atan2(target.p[0] - hunt.p[0], target.p[2] - hunt.p[2]);
+      if (hunt.phase === "telegraph") {
+        if (phaseTime >= 6) this.phase(hunt, "stalk", 0);
+      } else if (hunt.phase === "stalk") {
+        if (range <= 6.8 && clear) {
+          hunt.lungeTo = [...target.p];
+          this.phase(hunt, "lungeTell", 1.1);
+          continue;
+        }
+        if (range >= 9 && range <= 22 && clear && hunt.blinks < 2 && this.elapsed >= hunt.nextBlink && !players.some(
+          (player) => hunt.viewerIds.includes(player.id) && player.active && this.looking(player, hunt.p)
+        )) {
+          const angle = target.yaw + Math.PI + (this.random(hunt) - 0.5) * 1.4, candidate = [
+            target.p[0] - Math.sin(angle) * 12,
+            target.p[1],
+            target.p[2] - Math.cos(angle) * 12
+          ], placed = env.place(candidate, target.p, hunt.dimension);
+          if (placed && distance2(placed, target.p) >= 10 && !players.some(
+            (player) => hunt.viewerIds.includes(player.id) && player.active && this.looking(player, placed)
+          )) {
+            hunt.p = placed;
+            hunt.blinks++;
+          }
+          hunt.nextBlink = this.elapsed + 8 + this.random(hunt) * 4;
+        }
+        const dx = target.p[0] - hunt.p[0], dz = target.p[2] - hunt.p[2], length = Math.hypot(dx, dz);
+        if (length > 0.1) {
+          const step = Math.min(length, 2.8 * dt), proposed = [
+            hunt.p[0] + dx / length * step,
+            hunt.p[1],
+            hunt.p[2] + dz / length * step
+          ];
+          const moved = env.move(hunt.p, proposed, hunt.dimension);
+          if (moved) hunt.p = moved;
+        }
+      } else if (hunt.phase === "lungeTell") {
+        if (phaseTime + 1e-6 >= 1.1) {
+          hunt.lungeFrom = [...hunt.p];
+          this.phase(hunt, "lunge", 0.55);
+        }
+      } else if (hunt.phase === "lunge") {
+        const goal = hunt.lungeTo, progress = Math.min(1, phaseTime / 0.55), proposed = hunt.lungeFrom.map(
+          (value, axis) => value + (goal[axis] - value) * progress
+        ), before = [...hunt.p], moved = env.move(before, proposed, hunt.dimension);
+        if (moved) {
+          hunt.p = moved;
+          const steps = Math.max(1, Math.ceil(distance2(before, moved) / 0.2));
+          for (let step = 0; step <= steps; step++) {
+            const point = before.map(
+              (value, axis) => value + (moved[axis] - value) * step / steps
+            );
+            if (Math.hypot(point[0] - target.p[0], point[2] - target.p[2]) < 0.8 && Math.abs(point[1] - target.p[1]) < 1.5 && env.lineClear(eye(point), eye(target.p), hunt.dimension)) {
+              this.catch(hunt, target);
+              break;
+            }
+          }
+        }
+        if (hunt.phase === "lunge" && (!moved || progress >= 1))
+          this.phase(hunt, "vulnerable", 2.4);
+      } else if (hunt.phase === "vulnerable" && phaseTime >= 2.4) this.phase(hunt, "stalk", 0);
+    }
+    const signals = this.signals;
+    this.signals = [];
+    return { hunts: [...this.hunts.values()].map((hunt) => this.wire(hunt)), signals };
+  }
+  hit(hunt, attacker, damage, cooldown, env) {
+    if (!Number.isFinite(damage) || damage <= 0 || terminal(hunt.phase) || hunt.phase === "caught" || hunt.phase === "telegraph")
+      return miss;
+    if (this.elapsed - (hunt.lastHits.get(attacker.id) ?? -Infinity) + 1e-6 < cooldown)
+      return miss;
+    hunt.lastHits.set(attacker.id, this.elapsed);
+    const amount = Math.min(40, damage) * (hunt.phase === "vulnerable" ? 1.45 : 0.2);
+    hunt.hp = Math.max(0, hunt.hp - amount);
+    hunt.hurtUntil = this.elapsed + 0.22;
+    if (hunt.hp <= 0) this.end(hunt, "banished");
+    else if (hunt.phase === "vulnerable") {
+      const dx = hunt.p[0] - attacker.p[0], dz = hunt.p[2] - attacker.p[2], length = Math.hypot(dx, dz);
+      if (length)
+        hunt.p = env.move(
+          hunt.p,
+          [hunt.p[0] + dx / length * 0.3, hunt.p[1], hunt.p[2] + dz / length * 0.3],
+          hunt.dimension
+        ) ?? hunt.p;
+    }
+    return { ok: true, damage: amount, banished: hunt.hp <= 0 };
+  }
+  attack(attack, players, env) {
+    const hunt = this.hunts.get(attack.huntId), attacker = players.find(
+      (player) => player.id === attack.attackerId && eligible(player) && player.active
+    );
+    if (!hunt || !attacker || attacker.dimension !== hunt.dimension || !hunt.viewerIds.includes(attacker.id) || !Number.isFinite(attack.reach) || attack.reach <= 0 || !Number.isFinite(attack.cooldown))
+      return miss;
+    const from = eye(attacker.p), to = eye(hunt.p, 1.7);
+    if (distance2(from, to) > Math.min(6, attack.reach) + 0.55 || !this.looking(attacker, hunt.p) || !env.lineClear(from, to, hunt.dimension))
+      return miss;
+    return this.hit(hunt, attacker, attack.damage, Math.max(0.25, attack.cooldown), env);
+  }
+  projectileHit(shot, players, env) {
+    const hunt = this.hunts.get(shot.huntId), attacker = players.find((player) => player.id === shot.attackerId && eligible(player));
+    if (!hunt || !attacker || attacker.dimension !== hunt.dimension || !hunt.viewerIds.includes(attacker.id) || ![...shot.from, ...shot.to].every(Number.isFinite) || distance2(shot.from, shot.to) > 20)
+      return miss;
+    const steps = Math.max(1, Math.ceil(distance2(shot.from, shot.to) / 0.2));
+    for (let step = 0; step <= steps; step++) {
+      const point = shot.from.map(
+        (value, axis) => value + (shot.to[axis] - value) * step / steps
+      );
+      if (Math.hypot(point[0] - hunt.p[0], point[2] - hunt.p[2]) <= 0.7 && point[1] >= hunt.p[1] && point[1] <= hunt.p[1] + 3.8 && env.lineClear(shot.from, point, hunt.dimension))
+        return this.hit(hunt, attacker, shot.damage, 0.2, env);
+    }
+    return miss;
+  }
+};
+
+// lib/horror-terrain.ts
+function createHuntEnvironment(worldFor, ensure = () => {
+}) {
+  return {
+    place(candidate, anchor, dimension) {
+      const world = worldFor(dimension);
+      const event = {
+        kind: "watcher",
+        p: [...candidate],
+        duration: 5,
+        intensity: 0.7
+      };
+      return placeHorrorEvent(
+        event,
+        anchor,
+        world.surface(anchor[0], anchor[2]) - anchor[1] > 5,
+        world,
+        (x, z) => ensure(dimension, x, z)
+      ) ? event.p : null;
+    },
+    lineClear(a, b2, dimension) {
+      const world = worldFor(dimension);
+      const distance3 = Math.hypot(b2[0] - a[0], b2[1] - a[1], b2[2] - a[2]);
+      if (!Number.isFinite(distance3) || distance3 > 128) return false;
+      const steps = Math.max(1, Math.ceil(distance3 / 0.2));
+      for (let step = 1; step < steps; step++) {
+        const t = step / steps;
+        if (world.solid(a[0] + (b2[0] - a[0]) * t, a[1] + (b2[1] - a[1]) * t, a[2] + (b2[2] - a[2]) * t))
+          return false;
+      }
+      return true;
+    },
+    move(from, to, dimension) {
+      const world = worldFor(dimension);
+      const length = Math.hypot(to[0] - from[0], to[2] - from[2]);
+      if (!Number.isFinite(length) || length > 8) return null;
+      const steps = Math.max(1, Math.ceil(length / 0.2));
+      let p = [...from];
+      const free = (x, y, z) => {
+        if (y < 1 || y > 65 || ![-0.42, 0, 0.42].some(
+          (dx) => [-0.42, 0, 0.42].some((dz) => world.solid(x + dx, y - 0.05, z + dz))
+        ))
+          return false;
+        for (const dx of [-0.42, 0, 0.42])
+          for (const dz of [-0.42, 0, 0.42]) {
+            for (const height of [0.05, 0.95, 1.9, 2.85, 3.8]) {
+              if (world.solid(x + dx, y + height, z + dz) || [7, 15].includes(world.get(x + dx, y + height, z + dz)))
+                return false;
+            }
+          }
+        return true;
+      };
+      for (let step = 1; step <= steps; step++) {
+        const x = from[0] + (to[0] - from[0]) * step / steps;
+        const z = from[2] + (to[2] - from[2]) * step / steps;
+        ensure(dimension, x, z);
+        const base = Math.round(p[1]);
+        const y = [base, base + 1, base - 1, base - 2].find((height) => free(x, height, z));
+        if (y === void 0) return p;
+        p = [x, y, z];
+      }
+      return p;
+    }
+  };
+}
+
 // lib/net-protocol.ts
-var PROTOCOL = 1;
+var PROTOCOL = 2;
 var MAX_PLAYERS = 16;
+var FACE_FRAME_MAX_LENGTH = 4e5;
+var FACE_FRAME_INTERVAL = 1 / 3;
+var FACE_FRAME_TIMEOUT = 3e3;
+var FACE_ROOM_FRAME_BUDGET = 18;
 var DIMENSIONS_NET = ["overworld", "nether", "end"];
 function validNick(n) {
   return typeof n === "string" && /^[\p{L}\p{N}_-]{3,20}$/u.test(n);
@@ -2737,6 +3602,32 @@ function validSkin(s) {
 }
 function validVoice(s) {
   return typeof s === "string" && s.length >= 320 && s.length <= 9e3 && s.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(s);
+}
+function validFaceFrame(value) {
+  if (value === null) return true;
+  if (typeof value !== "string" || value.length > FACE_FRAME_MAX_LENGTH || !/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(value))
+    return false;
+  try {
+    const bytes = atob(value.slice(23)), byte = (i) => bytes.charCodeAt(i);
+    if (bytes.length < 20 || byte(0) !== 255 || byte(1) !== 216 || byte(bytes.length - 2) !== 255 || byte(bytes.length - 1) !== 217)
+      return false;
+    for (let at = 2; at + 4 < bytes.length; ) {
+      if (byte(at++) !== 255) return false;
+      while (byte(at) === 255) at++;
+      const marker = byte(at++);
+      if (marker === 218 || marker === 217) return false;
+      const length = byte(at) * 256 + byte(at + 1);
+      if (length < 2 || at + length > bytes.length) return false;
+      if ([192, 193, 194].includes(marker)) {
+        if (length < 8 || byte(at + 2) !== 8) return false;
+        const height = byte(at + 3) * 256 + byte(at + 4), width = byte(at + 5) * 256 + byte(at + 6);
+        return width >= 16 && width <= 1024 && height >= 16 && height <= 1024;
+      }
+      at += length;
+    }
+  } catch {
+  }
+  return false;
 }
 
 // server/room.ts
@@ -2807,9 +3698,18 @@ var Room = class {
   chat = [];
   drops = [];
   pendingDrops = [];
+  facePeers = /* @__PURE__ */ new Map();
   shots = [];
   dragon = new Dragon();
   horror = new HorrorDirector(this.seed);
+  horrorHunt = new HorrorHunt();
+  huntViewers = /* @__PURE__ */ new Set();
+  huntEnvironment = createHuntEnvironment(
+    (dimension) => this.region(dimension).world,
+    (dimension, x, z) => {
+      this.ensure(dimension, x, z, 0);
+    }
+  );
   region(d) {
     return this.regions.get(d);
   }
@@ -2839,6 +3739,7 @@ var Room = class {
       response.pack = pack.snapshot();
     }
     response.inventoryRevision = Number(p.profile.inventoryRevision) || 0;
+    response.equipment = { ...p.equipment };
     if (data.chest) {
       const chest = data.chest;
       response.chest = { ...chest, revision: this.chestRevisions[chest.key] ?? 0 };
@@ -2847,7 +3748,7 @@ var Room = class {
       const furnace = data.furnace;
       response.furnace = { ...furnace, revision: this.furnaceRevisions[furnace.key] ?? 0 };
     }
-    if (!data.ok && ["inventoryGesture", "settleInventory"].includes(c.type))
+    if (!data.ok && ["inventoryGesture", "settleInventory", "armor", "equipArmor"].includes(c.type))
       response.pack = p.profile.pack;
     const snapshot = structuredClone(response);
     p.responses[c.req] = snapshot;
@@ -2906,6 +3807,7 @@ var Room = class {
         blocking: false,
         grounded: true,
         armor: 0,
+        equipment: normalizeEquipment(null),
         healed: 0,
         lastChat: 0
       };
@@ -2922,6 +3824,7 @@ var Room = class {
     p.difficulty = selectedDifficulty;
     p.profile.difficulty = selectedDifficulty;
     p.active = false;
+    p.profile.equipment = { ...p.equipment };
     this.send(id, {
       type: "welcome",
       id,
@@ -2954,8 +3857,64 @@ var Room = class {
       held: p.held,
       seen: p.seen,
       health: p.health,
-      difficulty: p.difficulty
+      difficulty: p.difficulty,
+      equipment: { ...p.equipment }
     };
+  }
+  clearFace(id) {
+    const previous = this.facePeers.get(id);
+    if (previous?.viewers.size)
+      this.send("*", {
+        type: "faceFrame",
+        sender: id,
+        frame: null,
+        viewers: [...previous.viewers],
+        cleared: []
+      });
+    this.facePeers.delete(id);
+  }
+  pruneFaces() {
+    for (const [id, face] of this.facePeers) {
+      const player = this.players.get(id);
+      if (!player || player.health <= 0 || this.now() - player.seen > 12e3 || this.now() - face.seen > FACE_FRAME_TIMEOUT)
+        this.clearFace(id);
+    }
+  }
+  faceFrame(id, frame) {
+    const player = this.players.get(id);
+    if (!player || !validFaceFrame(frame)) return;
+    if (frame === null || player.health <= 0 || this.now() - player.seen > 12e3) {
+      this.clearFace(id);
+      return;
+    }
+    const now = this.now(), previous = this.facePeers.get(id) ?? {
+      seen: now,
+      sent: -Infinity,
+      viewers: /* @__PURE__ */ new Set()
+    };
+    previous.seen = now;
+    this.facePeers.set(id, previous);
+    const interval = Math.max(
+      FACE_FRAME_INTERVAL * 1e3,
+      this.facePeers.size * 1e3 / FACE_ROOM_FRAME_BUDGET
+    );
+    if (now - previous.sent + 1 < interval) return;
+    previous.sent = now;
+    const viewers = new Set(
+      [...this.players.values()].filter(
+        (other) => other.id !== id && other.health > 0 && this.now() - other.seen < 12e3 && other.dimension === player.dimension && vec(other.p).distanceToSquared(vec(player.p)) <= 60 * 60
+      ).map((other) => other.id)
+    );
+    const cleared = [...previous.viewers].filter((viewer) => !viewers.has(viewer));
+    previous.viewers = viewers;
+    if (viewers.size || cleared.length)
+      this.send("*", {
+        type: "faceFrame",
+        sender: id,
+        frame: viewers.size ? frame : null,
+        viewers: [...viewers],
+        cleared
+      });
   }
   input(id, m) {
     const p = this.players.get(id);
@@ -2966,7 +3925,7 @@ var Room = class {
       p.yaw = Number.isFinite(m.yaw) ? Number(m.yaw) : 0;
       p.pitch = Math.max(-1.54, Math.min(1.54, Number(m.pitch) || 0));
       p.moving = !!m.moving;
-      if (p.active && m.active !== true && p.difficulty === "horror")
+      if (p.active && m.active !== true && p.difficulty === "horror" && !this.horrorHunt.view(id).some((hunt) => hunt.phase === "caught"))
         this.send(id, { type: "horrorReset" });
       p.active = m.active === true;
       if (m.furnaceKey === null) this.furnaceViewers.delete(id);
@@ -2980,7 +3939,7 @@ var Room = class {
       if (p.held > 0 && !this.owns(p, p.held)) p.held = 0;
       p.blocking = !!m.blocking && p.held === 126;
       p.grounded = !!m.grounded;
-      p.armor = [121, 122].includes(Number(m.armor)) && this.owns(p, Number(m.armor)) ? Number(m.armor) : 0;
+      p.armor = p.equipment.chest;
       p.seen = this.now();
       this.ensure(p.dimension, p.p[0], p.p[2]);
     }
@@ -3008,10 +3967,10 @@ var Room = class {
       inventoryRevision: revision,
       lastMine: p.profile.lastMine,
       difficulty: p.difficulty,
-      food
+      food,
+      equipment: { ...p.equipment }
     };
-    if (typeof m.health === "number" && Number.isFinite(m.health) && m.health < health)
-      this.damage(p, health - Math.max(0, m.health));
+    p.profile.health = health;
   }
   owns(p, id, n = 1) {
     return Number.isInteger(n) && n > 0 && ((p.profile.inventory ?? {})[id] ?? 0) >= n;
@@ -3030,6 +3989,8 @@ var Room = class {
       p.difficulty = normalizeDifficulty(c.difficulty);
       p.profile.difficulty = p.difficulty;
       this.horror.reset(id);
+      this.horrorHunt.reset(id);
+      this.broadcastHunts();
       this.send(id, { type: "horrorReset" });
       return this.reply(p, c, { ok: true, difficulty: p.difficulty });
     }
@@ -3040,9 +4001,14 @@ var Room = class {
       p.spawnUntil = this.now() + 8e3;
       p.hurtUntil = this.now() + 3e3;
       p.profile = { ...p.profile, inventory: {}, pack: void 0 };
+      p.equipment = normalizeEquipment(null);
+      p.profile.equipment = { ...p.equipment };
+      p.armor = 0;
       p.profile.food = 20;
       p.hungerClock = 0;
       this.horror.reset(id);
+      this.horrorHunt.reset(id);
+      this.broadcastHunts();
       this.send(id, { type: "horrorReset" });
       return this.reply(p, c, { ok: true, health: 20 });
     }
@@ -3055,6 +4021,49 @@ var Room = class {
       return this.reply(p, c, { ok: true, health: p.health });
     }
     if (p.health <= 0) return reject("Najpierw odrod\u017A posta\u0107.");
+    if (c.type === "armor" || c.type === "equipArmor") {
+      const revision = Number(p.profile.inventoryRevision) || 0;
+      if (c.baseRevision !== revision) return reject("Ekwipunek si\u0119 zmieni\u0142. Spr\xF3buj ponownie.");
+      const pack = new InventoryPack();
+      pack.restore(p.profile.pack ?? {});
+      pack.reconcile(p.profile.inventory ?? {});
+      const equipment = { ...p.equipment };
+      if (c.type === "armor") {
+        if (!ARMOR_SLOTS.includes(c.slot))
+          return reject("Nieprawid\u0142owe miejsce pancerza.");
+        const expected = c.expectedCursor;
+        if (expected !== void 0 && (expected === null ? pack.cursor !== null : !pack.cursor || expected.id !== pack.cursor.id || expected.n !== pack.cursor.n))
+          return reject("Przedmiot trzymany kursorem si\u0119 zmieni\u0142.");
+        if (c.expectedEquipped !== void 0 && c.expectedEquipped !== equipment[c.slot])
+          return reject("Pancerz w tym miejscu si\u0119 zmieni\u0142.");
+        if (!clickArmorSlot(pack, equipment, c.slot))
+          return reject("Ten przedmiot nie pasuje do miejsca pancerza.");
+      } else {
+        const from = c.from;
+        if (from !== void 0 && (!from || !["slots", "grid"].includes(from.area) || !Number.isInteger(from.index) || from.index < 0 || from.index >= pack[from.area].length))
+          return reject("Nieprawid\u0142owe \u017Ar\xF3d\u0142o elementu pancerza.");
+        if (!Number.isInteger(c.id) || !equipArmorItem(
+          pack,
+          equipment,
+          Number(c.id),
+          from,
+          c.expected
+        ))
+          return reject("Nie masz tego elementu pancerza w wybranym miejscu.");
+      }
+      p.equipment = equipment;
+      p.armor = equipment.chest;
+      p.profile.equipment = { ...equipment };
+      p.profile.pack = pack.snapshot();
+      p.profile.inventory = pack.counts();
+      return this.reply(p, c, { ok: true });
+    }
+    if (c.type === "environmentDamage") {
+      if (!["fall", "lava", "drowning", "void"].includes(String(c.reason)) || typeof c.amount !== "number" || !Number.isFinite(c.amount) || c.amount <= 0 || c.amount > 100)
+        return reject("Nieprawid\u0142owe obra\u017Cenia \u015Brodowiskowe.");
+      this.damage(p, c.amount, [0, 0, 0], "environment", String(c.reason));
+      return this.reply(p, c, { ok: true });
+    }
     if (c.type === "transfer") return reject("U\u017Cyj p\xF3l skrzyni.");
     if (c.type === "inventoryGesture" || c.type === "settleInventory") {
       if (c.baseRevision !== (Number(p.profile.inventoryRevision) || 0))
@@ -3205,12 +4214,34 @@ var Room = class {
           damage *= 0.65;
         } else damage *= 0.25;
       }
-      damage *= target.armor === 122 ? 0.55 : target.armor === 121 ? 0.75 : 1;
       const knock = delta.normalize().multiplyScalar(stats.knockback);
       knock.y = 2.8;
       p.pvpUntil = target.pvpUntil = this.now() + 2e4;
-      this.damage(target, Math.max(1, Math.round(damage)), array(knock), "pvp");
+      this.damage(target, Math.max(1, Math.round(damage)), array(knock), "pvp", "pvp");
       return this.reply(p, c, { ok: true, message: critical ? "Trafienie krytyczne!" : void 0 });
+    }
+    if (c.type === "huntHit") {
+      const stats = weapon(p.held);
+      if (p.difficulty !== "horror" || this.now() - p.lastAction < stats.cooldown * 1e3 || p.stamina < stats.stamina)
+        return reject("Nie mo\u017Cesz teraz zaatakowa\u0107 tego celu.");
+      const hit = this.horrorHunt.attack(
+        {
+          huntId: String(c.target),
+          attackerId: id,
+          damage: stats.damage,
+          reach: stats.reach,
+          cooldown: stats.cooldown
+        },
+        this.horrorContexts(
+          [...this.players.values()].filter((player) => this.now() - player.seen < 12e3)
+        ),
+        this.huntEnvironment
+      );
+      if (!hit.ok) return reject("Go\u015B\u0107 jest zas\u0142oni\u0119ty, odporny lub poza zasi\u0119giem.");
+      p.lastAction = this.now();
+      p.stamina -= stats.stamina;
+      this.broadcastHunts();
+      return this.reply(p, c, { ok: true, huntDamage: hit.damage });
     }
     if (c.type === "hit") {
       if (this.now() - p.lastAction < weapon(p.held).cooldown * 1e3)
@@ -3325,35 +4356,40 @@ var Room = class {
         cost
       });
     }
-    if (this.now() - p.lastAction < 110) return reject("Poczekaj chwil\u0119.");
+    if (this.now() - p.lastAction < 110 && !(c.type === "mine" && miningDuration(block, p.held) === 0))
+      return reject("Poczekaj chwil\u0119.");
     p.lastAction = this.now();
     if (c.type === "mine") {
+      if (block !== c.expected || !isMineableBlock(block, y))
+        return reject("Ten blok ju\u017C si\u0119 zmieni\u0142 lub nie mo\u017Cna go wydoby\u0107.");
       const elapsed = this.now() - (Number(p.profile.lastMine) || 0);
       if (elapsed < miningDuration(block, p.held) * 650)
         return reject("Blok wymaga d\u0142u\u017Cszego kopania.");
       p.profile.lastMine = this.now();
-      if (block !== c.expected || !block || [7, 13, 18, 35].includes(block))
-        return reject("Ten blok ju\u017C si\u0119 zmieni\u0142.");
-      if (block === 12 && p.held !== 103) return reject("Obsydian wymaga diamentowego kilofa.");
       w.set(x, y, z, 0);
       const grant = [];
-      if ([64, 65, 66].includes(block)) {
+      const harvest = harvestAllowed(block, p.held);
+      if (harvest && [64, 65, 66].includes(block)) {
         grant.push([116, block === 66 ? 3 : 1]);
         if (block === 66) grant.push([117, 2]);
         delete this.region(p.dimension).crops[key];
-      } else if (block === 79) {
+      } else if (harvest && block === 79) {
         if (Math.random() < 0.65) grant.push([116, 1]);
-      } else
-        grant.push([
-          block === 1 ? 2 : block === 3 ? 9 : block === 20 ? 109 : block === 22 ? 111 : block === 42 && Math.random() < 0.22 ? 124 : block,
-          1
-        ]);
+      } else if (harvest) {
+        const resource = minedResource(block);
+        grant.push([block === 42 && Math.random() < 0.22 ? 124 : resource.id, resource.n]);
+      }
       if (block === 61 && this.storage[key]) {
         for (const [i, n] of Object.entries(this.storage[key])) grant.push([Number(i), n]);
         delete this.storage[key];
         delete this.slots[key];
       }
-      return this.reply(p, c, { ok: true, grant, mined: true, xp: block === 22 ? 8 : 1 });
+      return this.reply(p, c, {
+        ok: true,
+        grant,
+        mined: true,
+        xp: harvest ? block === 22 ? 8 : 1 : 0
+      });
     }
     if (c.type === "use") {
       const held = p.held;
@@ -3383,9 +4419,10 @@ var Room = class {
         return reject("Nieprawid\u0142owe miejsce.");
       this.ensure(p.dimension, a, d);
       const old = w.get(a, b2, d);
-      if (old !== 0 && old !== 7 && !BLOCKS[old]?.plant) return reject("To miejsce jest zaj\u0119te.");
+      if (old !== 0 && old !== 7 && !(held === 115 && old === 15) && !BLOCKS[old]?.plant)
+        return reject("To miejsce jest zaj\u0119te.");
       const next = held === 115 ? 7 : held === 116 ? 64 : held;
-      if (!BLOCKS[next] || next < 1 || next === 35 || next === 13 || next === 18)
+      if (!BLOCKS[next] || next < 1 || next === 13 || next === 18)
         return reject("Nie mo\u017Cna postawi\u0107 tego przedmiotu.");
       if (held === 116 && (p.dimension !== "overworld" || w.get(a, b2 - 1, d) !== 63))
         return reject("Nasiona wymagaj\u0105 ziemi uprawnej.");
@@ -3393,7 +4430,10 @@ var Room = class {
         (q) => this.now() - q.seen < 12e3 && q.dimension === p.dimension && a + 1 > q.p[0] - 0.3 && a < q.p[0] + 0.3 && d + 1 > q.p[2] - 0.3 && d < q.p[2] + 0.3 && b2 + 1 > q.p[1] && b2 < q.p[1] + 1.8
       ))
         return reject("W tym miejscu stoi gracz.");
-      if (!(held === 115 && p.dimension === "nether")) w.set(a, b2, d, next);
+      if (held === 115) {
+        if (p.dimension !== "nether" && !w.pourWater(a, b2, d))
+          return reject("Brak miejsca na wod\u0119.");
+      } else w.set(a, b2, d, next);
       if (next === 64) this.region(p.dimension).crops[p.dimension + ":" + [a, b2, d]] = 0;
       return this.reply(p, c, {
         ok: true,
@@ -3425,10 +4465,16 @@ var Room = class {
     });
   }
   queuePendingDrop(drop) {
-    const same = this.pendingDrops.filter((d) => d.dimension === drop.dimension && d.id === drop.id);
-    let target = same.find((d) => d.p.every((value, axis) => Math.floor(value / 16) === Math.floor(drop.p[axis] / 16)));
+    const same = this.pendingDrops.filter(
+      (d) => d.dimension === drop.dimension && d.id === drop.id
+    );
+    let target = same.find(
+      (d) => d.p.every((value, axis) => Math.floor(value / 16) === Math.floor(drop.p[axis] / 16))
+    );
     if (!target && this.pendingDrops.length >= 512 && same.length)
-      target = same.reduce((nearest, d) => vec(d.p).distanceToSquared(vec(drop.p)) < vec(nearest.p).distanceToSquared(vec(drop.p)) ? d : nearest);
+      target = same.reduce(
+        (nearest, d) => vec(d.p).distanceToSquared(vec(drop.p)) < vec(nearest.p).distanceToSquared(vec(drop.p)) ? d : nearest
+      );
     if (target) {
       target.n += drop.n;
       return;
@@ -3450,13 +4496,20 @@ var Room = class {
       this.drop(next.dimension, next.id, next.n, next.p, next.v);
     }
   }
-  damage(p, n, knockback = [0, 0, 0], source = "environment") {
+  damage(p, n, knockback = [0, 0, 0], source = "environment", reason = source) {
     if (p.health <= 0 || p.hurtUntil > this.now()) return;
     if (source !== "pvp") n = Math.max(0.1, n * difficultyRules(p.difficulty).environmentDamage);
+    if (!["fall", "void", "drowning", "hunger", "horror"].includes(reason))
+      n *= armorMultiplier(p.equipment);
     p.health = Math.max(0, p.health - n);
     p.healed = this.now();
     p.hurtUntil = this.now() + 800;
     if (p.health === 0) {
+      for (const id of Object.values(p.equipment))
+        if (id) this.drop(p.dimension, id, 1, [p.p[0], p.p[1] + 0.7, p.p[2]]);
+      p.equipment = normalizeEquipment(null);
+      p.profile.equipment = { ...p.equipment };
+      p.armor = 0;
       const inventory = p.profile.inventory ?? {};
       for (const [id, n2] of Object.entries(inventory))
         if (this.validItem(Number(id)))
@@ -3467,6 +4520,7 @@ var Room = class {
           ]);
       p.profile = { ...p.profile, inventory: {}, pack: void 0 };
       this.horror.reset(p.id);
+      this.horrorHunt.reset(p.id);
       this.send(p.id, { type: "horrorReset" });
       this.message("Serwer", p.nick + " poleg\u0142. Przedmioty czekaj\u0105 w miejscu \u015Bmierci.", true);
     }
@@ -3476,6 +4530,7 @@ var Room = class {
       type: "damage",
       health: p.health,
       amount: n,
+      reason,
       knockback,
       inventoryRevision: Number(p.profile.inventoryRevision) || 0
     });
@@ -3484,9 +4539,9 @@ var Room = class {
     return p.dimension === "overworld" && Math.hypot(p.p[0] - 8, p.p[2] - 22) < 12;
   }
   lineClear(w, a, b2) {
-    const delta = b2.clone().sub(a), distance2 = delta.length();
+    const delta = b2.clone().sub(a), distance3 = delta.length();
     delta.normalize();
-    for (let t = 0.25; t < distance2 - 0.3; t += 0.25) {
+    for (let t = 0.25; t < distance3 - 0.3; t += 0.25) {
       const p = a.clone().addScaledVector(delta, t);
       if (w.solid(p.x, p.y, p.z)) return false;
     }
@@ -3519,6 +4574,7 @@ var Room = class {
         array(m.group.position)
       );
       if (m.kind === "enderman") this.drop(p.dimension, 111, 1, array(m.group.position));
+      if (m.kind === "cow") this.drop(p.dimension, 140, 1, array(m.group.position));
       this.send(p.id, { type: "award", xp: m.hostile ? 8 : 3 });
     }
   }
@@ -3561,8 +4617,8 @@ var Room = class {
       r.mobs.set("m" + ++this.sequence, m);
     }
   }
-  tickHorror(dt, players) {
-    const contexts = players.map((p) => {
+  horrorContexts(players) {
+    return players.map((p) => {
       const world = this.region(p.dimension).world;
       return {
         id: p.id,
@@ -3577,19 +4633,83 @@ var Room = class {
         underground: world.surface(p.p[0], p.p[2]) > p.p[1] + 5
       };
     });
-    for (const event of this.horror.tick(dt, contexts)) {
+  }
+  broadcastHunts() {
+    for (const player of this.players.values()) {
+      const hunt = player.difficulty === "horror" && player.health > 0 && this.now() - player.seen < 12e3 ? this.horrorHunt.view(player.id)[0] ?? null : null;
+      if (hunt || this.huntViewers.has(player.id))
+        this.send(player.id, { type: "horrorHunt", hunt, clock: this.horrorHunt.elapsed });
+      if (hunt) this.huntViewers.add(player.id);
+      else this.huntViewers.delete(player.id);
+    }
+  }
+  applyHuntSignals(signals) {
+    for (const signal of signals) {
+      if (signal.type === "caught") {
+        const p = this.players.get(signal.playerId), hunt = signal.hunt;
+        if (!p || p.difficulty !== "horror" || p.health <= 0) continue;
+        p.hurtUntil = Math.max(p.hurtUntil, this.now() + 1400);
+        const event = {
+          id: "caught-" + hunt.id,
+          kind: "jumpscare",
+          p: [...hunt.p],
+          duration: 1.3,
+          intensity: 1,
+          seed: hunt.seed,
+          reason: "caught",
+          viewerIds: [p.id],
+          dimension: hunt.dimension,
+          at: this.horror.elapsed,
+          yaw: hunt.yaw
+        };
+        this.send(p.id, { type: "horror", event });
+      } else if (signal.type === "death") {
+        const p = this.players.get(signal.playerId);
+        if (p && p.difficulty === "horror" && p.health > 0 && this.now() - p.seen < 12e3) {
+          p.hurtUntil = 0;
+          this.damage(p, 1e6, [0, 0, 0], "environment", "horror");
+        }
+      } else {
+        for (const id of signal.hunt.viewerIds) {
+          const p = this.players.get(id);
+          if (p?.difficulty === "horror" && p.health > 0 && this.now() - p.seen < 12e3)
+            this.send(id, {
+              type: "award",
+              xp: signal.reason === "banished" ? 100 : 0,
+              message: signal.reason === "banished" ? "Go\u015B\u0107 zosta\u0142 odp\u0119dzony. +100 PD" : "Zgubi\u0142e\u015B Go\u015Bcia. Odzyskaj oddech."
+            });
+        }
+      }
+    }
+  }
+  tickHorror(dt, players) {
+    const contexts = this.horrorContexts(players);
+    for (const event of this.horror.tick(
+      dt,
+      contexts.map((context) => ({
+        ...context,
+        active: context.active && !this.horrorHunt.view(context.id).length
+      }))
+    )) {
       const viewers = event.viewerIds.filter((id) => {
         const p = this.players.get(id);
         return p?.active && p.health > 0 && p.difficulty === "horror" && p.dimension === event.dimension;
       });
       if (!viewers.length) continue;
       event.viewerIds = viewers;
+      if (event.kind === "jumpscare") {
+        this.horrorHunt.start(event, contexts, this.huntEnvironment);
+        continue;
+      }
       if (["watcher", "silhouette", "approach"].includes(event.kind)) {
         const anchor = this.players.get(viewers[0]), underground = contexts.find((c) => c.id === anchor.id).underground;
         this.placeHorrorEvent(event, anchor.p, underground);
       }
       for (const id of viewers) this.send(id, { type: "horror", event: structuredClone(event) });
     }
+    const update = this.horrorHunt.tick(dt, contexts, this.huntEnvironment);
+    this.applyHuntSignals(update.signals);
+    if (this.tickId % 2 === 0 || update.signals.length) this.broadcastHunts();
   }
   furnaceInReach(p, key) {
     if (!key.startsWith(p.dimension + ":")) return false;
@@ -3649,17 +4769,12 @@ var Room = class {
     }
   }
   placeHorrorEvent(event, anchor, underground) {
-    placeHorrorEvent(
-      event,
-      anchor,
-      underground,
-      this.region(event.dimension).world,
-      (x, z) => {
-        this.ensure(event.dimension, x, z, 0);
-      }
-    );
+    placeHorrorEvent(event, anchor, underground, this.region(event.dimension).world, (x, z) => {
+      this.ensure(event.dimension, x, z, 0);
+    });
   }
   tick(dt) {
+    this.pruneFaces();
     this.clock += dt;
     this.tickId++;
     const active = [...this.players.values()].filter((p) => this.now() - p.seen < 12e3);
@@ -3672,7 +4787,7 @@ var Room = class {
       if (p.hungerClock >= 25) {
         p.hungerClock -= 25;
         p.profile.food = Math.max(0, Number(p.profile.food ?? 20) - 1);
-        if (p.profile.food === 0) this.damage(p, 1);
+        if (p.profile.food === 0) this.damage(p, 1, [0, 0, 0], "environment", "hunger");
       }
       if (Number(p.profile.food ?? 20) > 14 && p.health < 20 && this.now() - p.healed >= rules.regenerationSeconds * 1e3) {
         p.healed = this.now();
@@ -3704,10 +4819,26 @@ var Room = class {
           this.clock,
           vec(p.p),
           r.world,
-          (n) => this.damage(p, n),
-          (pos) => this.enemyShot(dimension, pos, p),
+          (n) => {
+            if (m.group.position.distanceTo(vec(p.p)) < 2.65 && this.lineClear(
+              r.world,
+              m.group.position.clone().add(new THREE2.Vector3(0, 1.3, 0)),
+              vec(p.p).add(new THREE2.Vector3(0, 1.3, 0))
+            ))
+              this.damage(p, n, [0, 0, 0], "environment", "mob");
+          },
           (pos) => {
-            for (const q of targets) if (vec(q.p).distanceTo(pos) < 4) this.damage(q, 8);
+            if (this.lineClear(r.world, pos, vec(p.p).add(new THREE2.Vector3(0, 1.3, 0))))
+              this.enemyShot(dimension, pos, p);
+          },
+          (pos) => {
+            for (const q of targets)
+              if (vec(q.p).distanceTo(pos) < 4 && this.lineClear(
+                r.world,
+                pos.clone().add(new THREE2.Vector3(0, 1, 0)),
+                vec(q.p).add(new THREE2.Vector3(0, 1, 0))
+              ))
+                this.damage(q, 8, [0, 0, 0], "environment", "explosion");
             for (let x = -2; x <= 2; x++)
               for (let y = 0; y < 3; y++)
                 for (let z = -2; z <= 2; z++)
@@ -3749,41 +4880,74 @@ var Room = class {
       }
     }
     const end = active.filter((p) => p.dimension === "end" && p.health > 0);
-    if (end.length)
+    if (end.length) {
+      const target = end[Math.floor(this.dragon.time / 6) % end.length];
       this.dragon.update(
         dt,
         8 - this.crystals.length,
-        vec(end[0].p),
-        (pos) => this.enemyShot("end", pos, end[Math.floor(Math.random() * end.length)])
+        vec(target.p),
+        (pos, power, speed, aim) => this.enemyShot("end", pos, target, power, speed, aim)
       );
+    }
     for (const s of this.shots) {
+      const previousShot = array(s.p);
       s.life -= dt;
       s.p.addScaledVector(s.v, dt);
       const w = this.ensure(s.dimension, s.p.x, s.p.z, 0);
-      if (w.solid(s.p.x, s.p.y, s.p.z)) s.life = 0;
+      if (w.solid(s.p.x, s.p.y, s.p.z) || !this.lineClear(w, vec(previousShot), s.p)) s.life = 0;
+      if (s.life <= 0) continue;
       if (!s.owner) {
         for (const p of active)
-          if (p.dimension === s.dimension && vec(p.p).add(new THREE2.Vector3(0, 1, 0)).distanceTo(s.p) < 0.9) {
-            if (!this.safe(p) && this.now() > p.spawnUntil) this.damage(p, 4);
+          if (p.dimension === s.dimension && p.health > 0 && vec(p.p).add(new THREE2.Vector3(0, 1, 0)).distanceTo(s.p) < 0.9) {
+            if (!this.safe(p) && this.now() > p.spawnUntil)
+              this.damage(p, s.power ?? 4, [0, 0, 0], "environment", "projectile");
             s.life = 0;
             break;
           }
       } else {
         const p = this.players.get(s.owner);
-        if (p) {
+        if (p && p.dimension === s.dimension && this.now() - p.seen < 12e3) {
+          if (s.life > 0 && p.difficulty === "horror") {
+            const contexts = this.horrorContexts(active);
+            for (const hunt of this.horrorHunt.view(p.id))
+              if (this.horrorHunt.projectileHit(
+                {
+                  huntId: hunt.id,
+                  attackerId: p.id,
+                  damage: 20,
+                  from: previousShot,
+                  to: array(s.p)
+                },
+                contexts,
+                this.huntEnvironment
+              ).ok) {
+                s.life = 0;
+                this.broadcastHunts();
+                break;
+              }
+          }
+          if (s.life <= 0) continue;
           for (const target of active)
             if (target.id !== p.id && target.dimension === s.dimension && target.health > 0 && !this.safe(target) && !this.safe(p) && this.now() > target.spawnUntil && this.now() > p.spawnUntil && vec(target.p).add(new THREE2.Vector3(0, 1, 0)).distanceTo(s.p) < 0.8) {
               p.pvpUntil = target.pvpUntil = this.now() + 2e4;
-              this.damage(target, 7, array(s.v.clone().normalize().multiplyScalar(3)), "pvp");
+              this.damage(
+                target,
+                7,
+                array(s.v.clone().normalize().multiplyScalar(3)),
+                "pvp",
+                "pvp"
+              );
               s.life = 0;
               break;
             }
+          if (s.life <= 0) continue;
           for (const m of this.region(s.dimension).mobs.values())
             if (!m.dead && m.group.position.clone().add(new THREE2.Vector3(0, 1, 0)).distanceTo(s.p) < m.size + 0.4) {
               this.hitMob(p, m, 20);
               s.life = 0;
               break;
             }
+          if (s.life <= 0) continue;
           if (s.dimension === "end") {
             for (let i = 0; i < 8; i++)
               if (!this.crystals.includes(i) && this.crystalPosition(i).distanceTo(s.p) < 1.4) {
@@ -3795,7 +4959,7 @@ var Room = class {
               s.life = 0;
             }
           }
-        }
+        } else s.life = 0;
       }
     }
     this.shots = this.shots.filter((s) => s.life > 0);
@@ -3818,13 +4982,14 @@ var Room = class {
     this.drops = this.drops.filter((d) => d.life > 0 && d.n > 0 && d.p[1] > -30);
     this.drainPendingDrops();
   }
-  enemyShot(d, pos, p) {
+  enemyShot(d, pos, p, power = 4, speed = 12, aim) {
     this.shots.push({
       p: pos.clone(),
-      v: vec(p.p).add(new THREE2.Vector3(0, 1, 0)).sub(pos).normalize().multiplyScalar(12),
+      v: (aim?.clone() ?? vec(p.p).add(new THREE2.Vector3(0, 1, 0))).sub(pos).normalize().multiplyScalar(speed),
       dimension: d,
       owner: "",
-      life: 6
+      life: 6,
+      power
     });
   }
   mobWire(id, m) {
@@ -3845,6 +5010,7 @@ var Room = class {
     for (const [d, r] of this.regions) mobs[d] = [...r.mobs].map(([id, m]) => this.mobWire(id, m));
     const dragon = {
       hp: round(this.dragon.hp),
+      orbit: this.dragon.orbit,
       time: this.dragon.time,
       shot: this.dragon.shot,
       radius: this.dragon.radius,
@@ -3919,6 +5085,8 @@ var Room = class {
   frameDragon() {
     return {
       hp: this.dragon.hp,
+      maxHp: DRAGON_MAX_HEALTH,
+      orbit: this.dragon.orbit,
       time: this.dragon.time,
       dead: this.dragon.dead,
       deathTime: this.dragon.deathTime
@@ -3926,6 +5094,7 @@ var Room = class {
   }
   restore(s) {
     if (s.version !== 1) throw Error("Unsupported world");
+    this.facePeers.clear();
     this.clock = s.clock;
     this.tickId = s.tick;
     this.sequence = s.sequence;
@@ -3941,20 +5110,40 @@ var Room = class {
     this.furnaceViewers.clear();
     this.dirtyFurnaces.clear();
     this.horror.restore(s.horror);
+    this.horrorHunt = new HorrorHunt();
+    this.huntViewers.clear();
     this.chat = s.chat ?? [];
     this.drops = s.drops;
     this.pendingDrops = [];
     for (const d of s.pendingDrops ?? [])
       if (DIMENSIONS_NET.includes(d.dimension) && this.validItem(d.id) && Number.isSafeInteger(d.n) && d.n > 0 && validVec(d.p) && validVec(d.v))
-        this.queuePendingDrop({ dimension: d.dimension, id: d.id, n: d.n, p: [...d.p], v: [...d.v] });
+        this.queuePendingDrop({
+          dimension: d.dimension,
+          id: d.id,
+          n: d.n,
+          p: [...d.p],
+          v: [...d.v]
+        });
     Object.assign(this.dragon, s.dragon);
+    this.dragon.hp = restoreDragonHealth(s.dragon?.hp, s.dragon?.maxHp, s.won);
+    if (!Number.isFinite(s.dragon?.orbit)) this.dragon.orbit = (Number(s.dragon?.time) || 0) * 0.26;
     this.players = new Map(
       s.players.map((p) => {
         const difficulty = normalizeDifficulty(p.profile?.difficulty);
+        const pack = new InventoryPack();
+        pack.restore(p.profile.pack ?? {});
+        pack.reconcile(p.profile.inventory ?? {});
+        const equipment = migrateEquipment(
+          p.equipment,
+          Number(p.profile.adventure?.armor ?? p.armor) || 0,
+          pack
+        );
         return [
           p.id,
           {
             ...p,
+            equipment,
+            armor: equipment.chest,
             seen: 0,
             active: false,
             sprinting: false,
@@ -3963,6 +5152,9 @@ var Room = class {
             pvpUntil: 0,
             profile: {
               ...p.profile,
+              equipment: { ...equipment },
+              pack: pack.snapshot(),
+              inventory: pack.counts(),
               difficulty,
               food: Number.isFinite(p.profile?.food) ? p.profile.food : 20
             }
@@ -4070,6 +5262,9 @@ var Gateway = class {
   incoming;
   lease;
   snapshot;
+  cameraPlayers = 1;
+  cameraPublishing = false;
+  cameraForwarding = false;
   async init() {
     if (this.starting) return this.starting;
     this.starting = this.start();
@@ -4171,9 +5366,15 @@ var Gateway = class {
   }
   broadcast(packet) {
     const publish = () => {
-      if (this.store) void this.store.publish(this.out, encodeRedis(packet)).catch(() => {
-      });
-      else this.route(packet);
+      const camera = packet.type === "delivery" && packet.data?.type === "faceFrame" && packet.data.frame !== null;
+      if (camera && this.cameraPublishing) return;
+      if (this.store) {
+        if (camera) this.cameraPublishing = true;
+        void this.store.publish(this.out, encodeRedis(packet)).catch(() => {
+        }).finally(() => {
+          if (camera) this.cameraPublishing = false;
+        });
+      } else this.route(packet);
     };
     if (packet.type === "delivery" && packet.data?.type === "result" && packet.data.ok && this.store) {
       void this.persist().then((saved) => {
@@ -4183,6 +5384,8 @@ var Gateway = class {
     } else publish();
   }
   route(packet) {
+    if (packet.type === "delivery" && packet.data?.type === "frame")
+      this.cameraPlayers = Math.max(1, Math.min(16, packet.data.players?.length ?? 1));
     if (packet.type === "connection") {
       for (const p of this.peers.values())
         if (p.id === packet.id && p.connection !== packet.connection) {
@@ -4201,6 +5404,14 @@ var Gateway = class {
           this.send(p.socket, { type: "voice", ...packet.data });
         else if (packet.type === "delivery") {
           let data = packet.data;
+          if (data.type === "faceFrame") {
+            if (data.sender === p.id) continue;
+            if (data.viewers?.includes(p.id) && (data.frame === null || (p.socket.bufferedAmount ?? 0) <= 64e3))
+              this.send(p.socket, { type: "faceFrame", sender: data.sender, frame: data.frame });
+            else if (data.cleared?.includes(p.id))
+              this.send(p.socket, { type: "faceFrame", sender: data.sender, frame: null });
+            continue;
+          }
           if (data.type === "frame") {
             const self = data.players.find((q) => q.id === p.id), dimension = self?.dimension ?? "overworld";
             data = {
@@ -4218,8 +5429,15 @@ var Gateway = class {
   forward(packet) {
     if (this.closed) return;
     if (!this.store || this.room && Date.now() < this.leaseUntil) this.handle(packet);
-    else void this.store.publish(this.incoming, encodeRedis(packet)).catch(() => {
-    });
+    else {
+      const camera = packet.type === "faceFrame" && packet.data !== null;
+      if (camera && this.cameraForwarding) return;
+      if (camera) this.cameraForwarding = true;
+      void this.store.publish(this.incoming, encodeRedis(packet)).catch(() => {
+      }).finally(() => {
+        if (camera) this.cameraForwarding = false;
+      });
+    }
   }
   handle(packet) {
     const room = this.room;
@@ -4243,10 +5461,14 @@ var Gateway = class {
             });
       }
     } else if (packet.type === "input") room.input(id, data);
+    else if (packet.type === "faceFrame") room.faceFrame(id, data);
     else if (packet.type === "command") room.command(id, data);
     else if (packet.type === "profile") room.profile(id, data);
     else if (packet.type === "chat") room.chatMessage(id, data);
     else if (packet.type === "leave") {
+      room.clearFace(id);
+      room.horrorHunt.reset(id);
+      room.broadcastHunts();
       const p = room.players.get(id);
       if (p) p.seen = 0;
     }
@@ -4281,6 +5503,8 @@ var Gateway = class {
       bytes: 0,
       reset: Date.now(),
       voice: 0,
+      face: 0,
+      faceActive: false,
       joined: false
     };
     this.peers.set(ws, peer);
@@ -4298,7 +5522,7 @@ var Gateway = class {
       }
       peer.count++;
       peer.bytes += raw instanceof ArrayBuffer ? raw.byteLength : Array.isArray(raw) ? raw.reduce((n, b2) => n + b2.length, 0) : raw.length;
-      if (peer.count > 65 || peer.bytes > 22e4) return ws.close(1008, "Rate limit");
+      if (peer.count > 65 || peer.bytes > 18e5) return ws.close(1008, "Rate limit");
       let m;
       try {
         m = JSON.parse(raw.toString());
@@ -4308,7 +5532,15 @@ var Gateway = class {
       if (!m || typeof m !== "object") return;
       if (m.type === "ping") return this.send(ws, { type: "pong", time: m.time });
       if (m.type === "join") {
-        if (m.protocol !== PROTOCOL || !validToken(m.token) || !validNick(m.nick) || !validSkin(m.skin)) {
+        if (m.protocol !== PROTOCOL) {
+          this.send(ws, {
+            type: "error",
+            fatal: true,
+            message: "Ta wersja gry jest nieaktualna. Od\u015Bwie\u017C stron\u0119 lub pobierz nowe GRA.html."
+          });
+          return ws.close(1008);
+        }
+        if (!validToken(m.token) || !validNick(m.nick) || !validSkin(m.skin)) {
           this.send(ws, {
             type: "error",
             fatal: true,
@@ -4331,6 +5563,18 @@ var Gateway = class {
         return;
       }
       if (!peer.joined) return;
+      if (m.type === "faceFrame") {
+        const interval = Math.max(
+          FACE_FRAME_INTERVAL * 1e3,
+          this.cameraPlayers * 1e3 / FACE_ROOM_FRAME_BUDGET
+        );
+        if (validFaceFrame(m.frame) && (m.frame === null ? peer.faceActive : now - peer.face + 1 >= interval)) {
+          peer.faceActive = m.frame !== null;
+          if (peer.faceActive) peer.face = now;
+          this.forward({ type: "faceFrame", id: peer.id, data: m.frame });
+        }
+        return;
+      }
       if (m.type === "voice") {
         if (validVoice(m.audio) && now - peer.voice >= 70) {
           peer.voice = now;
@@ -4383,7 +5627,7 @@ function createGameServer(options = {}) {
   });
   const wss = new WebSocketServer({
     noServer: true,
-    maxPayload: 15e4,
+    maxPayload: 45e4,
     perMessageDeflate: { threshold: 1024 }
   });
   server2.on("upgrade", (req, socket, head) => {

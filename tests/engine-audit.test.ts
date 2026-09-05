@@ -119,6 +119,21 @@ test("Paused panels honor remapped bindings and a missing custom value falls bac
   assert.equal(fallback.resumes, 1);
 });
 
+test("Panel shortcuts remain usable while mouse capture is pending, movement stays blocked", () => {
+  for (const action of ["inventory", "journal", "dimensions", "help"] as Action[]) {
+    const f = keyFixture();
+    f.game.active = true;
+    f.game.needsCapture = true;
+    f.game.settings.bindings[action] = "KeyI";
+    f.press("KeyW");
+    assert.equal(f.game.keys.size, 0);
+    f.press("KeyI");
+    assert.deepEqual(f.pauses, [action]);
+    f.press("KeyI");
+    assert.equal(f.resumes, 1);
+  }
+});
+
 test("Paused hotkeys ignore typing, repeated keys, unrelated panels, the title screen and death", () => {
   for (const typing of ["input", "textarea", "select", "editable"] as const) {
     const f = keyFixture();

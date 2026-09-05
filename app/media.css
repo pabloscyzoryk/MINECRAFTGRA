@@ -1,0 +1,333 @@
+.hud-left-stack {
+  position: absolute;
+  top: 82px;
+  left: 26px;
+  width: min(310px, calc(100vw - 52px));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  pointer-events: none;
+}
+.hud-left-stack .quest-card {
+  position: static;
+  max-width: 100%;
+  width: 100%;
+  text-align: left;
+}
+.hud-left-stack .network-hud {
+  position: static;
+  display: flex;
+  flex-wrap: wrap;
+  max-width: 100%;
+  gap: 6px;
+}
+.network-hud button {
+  flex-shrink: 0;
+  min-width: 40px;
+  padding: 8px 10px;
+}
+.network-hud .network-status {
+  gap: 7px;
+  font-size: 12px;
+}
+.network-hud .network-status small {
+  font-size: 10px;
+}
+.network-hud .camera-on {
+  background: #325e50;
+  border-color: #a7d9a2;
+}
+.camera-live-dot {
+  width: 5px;
+  height: 5px;
+  background: #c9eda6;
+  border-radius: 50%;
+}
+.menu-microphone {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 14px;
+  margin: 18px 0;
+  border: 1px solid #bbd19a44;
+  border-radius: 9px;
+  background: #19372c;
+}
+.menu-microphone button {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  min-height: 44px;
+  width: 44px;
+  border: 1px solid #bdd3a860;
+  border-radius: 8px;
+}
+.menu-microphone b {
+  font-size: 13px;
+}
+.menu-microphone p {
+  color: #b7c5b2;
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 4px 0 0;
+}
+.media-settings {
+  display: grid;
+  gap: 20px;
+}
+.horror-status {
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid #b0939950;
+  border-left: 2px solid #bea6a0;
+  border-radius: 3px 9px 9px 3px;
+  background: #19171df0;
+  color: #ddd0c7;
+  box-shadow: 0 8px 30px #05040844;
+}
+.horror-status > span {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: #b79596;
+}
+.horror-status > b {
+  display: block;
+  font-size: 14px;
+  margin: 8px 0;
+}
+.horror-status p {
+  font-size: 11px;
+  line-height: 1.65;
+  color: #b9adb1;
+}
+.horror-status.phase-lungeTell,
+.horror-status.phase-lunge {
+  border-color: #c1a190;
+  background: #352024f2;
+}
+.horror-status.phase-vulnerable {
+  border-color: #c1c196;
+}
+.guest-health {
+  margin-top: 12px;
+  height: 4px;
+  background: #0d0c10;
+}
+.guest-health i {
+  height: 100%;
+  display: block;
+  background: #a9848a;
+  transition: width 0.12s;
+}
+.guest-caught
+  :is(
+    .hud-header,
+    .hud-left-stack,
+    .map-card,
+    .waypoint-hud,
+    .boss-hud,
+    .bottom-hud,
+    .play-hints,
+    .combat-hud,
+    .chat-preview,
+    .save-indicator,
+    .mobile-controls
+  ) {
+  visibility: hidden;
+}
+.media-shortcuts {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  color: #b8c8b0;
+}
+.media-shortcuts button {
+  padding: 9px 11px;
+  border: 1px solid #a9c08c55;
+  border-radius: 7px;
+  color: #d4e7b8;
+  white-space: nowrap;
+}
+.media-card,
+.media-settings > .voice-settings {
+  padding: 20px;
+  background: #10291f77;
+  border: 1px solid #abc69b38;
+  border-radius: 12px;
+  min-width: 0;
+}
+.media-card header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.media-card header > svg {
+  flex-shrink: 0;
+  color: #cae1a7;
+}
+.media-card h3 {
+  font-size: 16px;
+  color: #e4edd5;
+  margin: 0;
+  display: flex;
+  gap: 9px;
+  align-items: center;
+}
+.media-card header p {
+  font-size: 12px;
+  line-height: 1.65;
+  color: #b9c7b7;
+  margin-top: 5px;
+}
+.media-field {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+  margin-top: 14px;
+  min-width: 0;
+}
+.media-field select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #a5bf9952;
+  border-radius: 7px;
+  padding: 10px;
+  color: #e3eed7;
+  background: #172c24;
+}
+.media-check {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.media-check input {
+  accent-color: #c8dda0;
+}
+.camera-layout {
+  display: grid;
+  grid-template-columns: 155px minmax(0, 1fr);
+  align-items: start;
+  gap: 18px;
+  margin-top: 20px;
+}
+.camera-controls {
+  min-width: 0;
+}
+.camera-controls .primary-action {
+  padding: 13px;
+  min-height: 45px;
+  font-size: 13px;
+  margin: 0;
+}
+.camera-controls .quiet-action {
+  font-size: 12px;
+  padding: 12px 0;
+}
+.camera-avatar-preview {
+  position: relative;
+  background: radial-gradient(ellipse at 50% 38%, #49674755, #14271e 75%);
+  border-radius: 12px;
+  border: 1px solid #b0caa831;
+  overflow: hidden;
+}
+.camera-avatar-preview .inventory-avatar {
+  width: 100%;
+  height: 225px;
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+.camera-avatar-preview .inventory-avatar canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.camera-avatar-preview .inventory-avatar > span {
+  display: none;
+}
+.camera-state {
+  display: block;
+  text-align: center;
+  font-size: 10px;
+  color: #adc5a6;
+  padding: 9px 4px;
+}
+.camera-state.live {
+  color: #e8f6c6;
+  background: #46624166;
+}
+.network-players .player-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin-bottom: 0;
+}
+.settings-tabs > .inventory-tabs {
+  justify-content: flex-start;
+  gap: 3px;
+}
+.settings-tabs > .inventory-tabs [data-slot="tabs-trigger"] {
+  flex: 1 0 auto;
+}
+@media (max-width: 900px) {
+  .hud-left-stack {
+    left: 18px;
+    top: 72px;
+    width: 280px;
+  }
+  .waypoint-hud {
+    top: auto;
+    bottom: 215px;
+  }
+}
+@media (max-width: 600px) {
+  .hud-left-stack {
+    left: 15px;
+    top: 62px;
+    width: min(280px, calc(100vw - 30px));
+    gap: 8px;
+  }
+  .hud-left-stack .quest-card {
+    max-width: 225px;
+  }
+  .hud-brand > b {
+    display: none;
+  }
+  .hud-left-stack .network-hud button {
+    min-height: 38px;
+  }
+  .media-card,
+  .media-settings > .voice-settings {
+    padding: 14px;
+  }
+  .camera-layout {
+    grid-template-columns: 1fr;
+  }
+  .camera-avatar-preview {
+    width: 155px;
+    justify-self: center;
+  }
+  .settings-tabs > .inventory-tabs [data-slot="tabs-trigger"] {
+    flex-basis: 30%;
+  }
+}
+@media (pointer: coarse) {
+  .hud-left-stack {
+    left: max(12px, env(safe-area-inset-left));
+    top: 70px;
+    width: min(270px, calc(100vw - 24px));
+  }
+  .hud-left-stack .network-hud button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .hud-brand > b {
+    display: block;
+  }
+}

@@ -828,6 +828,10 @@
   }
 }
 
+.mc-equipment .armor-slot-empty { display: flex; flex-direction: column; align-items: center; gap: 1px; opacity: .65; }
+.mc-equipment .armor-slot-empty small { font-size: 7px; line-height: 1; }
+.mc-equipment .armor-slot:disabled { opacity: .4; }
+
 /* Pointer gestures share the same path for local inventory and network chests. */
 [data-inventory-slot] {
   touch-action: none;
