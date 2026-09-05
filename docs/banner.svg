@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="410" viewBox="0 0 1280 410" role="img" aria-labelledby="title desc">
+  <title id="title">BLOCKLAND — przeglądarkowy świat z bloków</title>
+  <desc id="desc">Ilustracja blokowych wysp, drzew i portalu z napisem Buduj. Odkrywaj. Graj razem.</desc>
+  <defs>
+    <linearGradient id="sky" x2="1" y2="1"><stop stop-color="#10231e"/><stop offset="1" stop-color="#2c4d43"/></linearGradient>
+    <linearGradient id="fade"><stop stop-color="#10231e"/><stop offset="1" stop-color="#10231e" stop-opacity="0"/></linearGradient>
+    <linearGradient id="portal" y2="1" x2="0"><stop stop-color="#c9b1fb"/><stop offset="1" stop-color="#725aa9"/></linearGradient>
+    <g id="cube"><path d="M0 0 35-20 70 0 35 20Z" fill="#aac578"/><path d="M0 0 35 20v39L0 39Z" fill="#557755"/><path d="m35 20 35-20v39L35 59Z" fill="#35574a"/></g>
+    <g id="tree"><path d="M26 22h14v55H26Z" fill="#614935"/><path d="m8-15 28-16 31 16-28 17Z" fill="#8ca866"/><path d="M8-15 39 2v43L8 27Z" fill="#46694c"/><path d="M39 2 67-15v42L39 45Z" fill="#294d3d"/></g>
+  </defs>
+  <rect width="1280" height="410" rx="20" fill="url(#sky)"/>
+  <g opacity=".12" stroke="#d4e7bc" stroke-width="1"><path d="M650 0v410M790 0v410M930 0v410M1070 0v410M1210 0v410M630 90h650M630 180h650M630 270h650M630 360h650"/></g>
+  <circle cx="1110" cy="73" r="33" fill="#d5e6b6" opacity=".9"/>
+  <path d="M740 67h103v14H740Zm36-14h118v15H776Zm266 57h102v13h-102Zm-26 11h102v13h-102Z" fill="#cfe1c7" opacity=".2"/>
+  <g transform="translate(745 215)"><use href="#cube" x="0" y="0"/><use href="#cube" x="70" y="0"/><use href="#cube" x="140" y="0"/><use href="#cube" x="210" y="0"/><use href="#cube" x="280" y="0"/><use href="#cube" x="35" y="20"/><use href="#cube" x="105" y="20"/><use href="#cube" x="175" y="20"/><use href="#cube" x="245" y="20"/><use href="#cube" x="70" y="40"/><use href="#cube" x="140" y="40"/><use href="#cube" x="210" y="40"/><use href="#cube" x="105" y="60"/><use href="#cube" x="175" y="60"/></g>
+  <g transform="translate(750 155)"><use href="#tree"/></g>
+  <g transform="translate(840 130) scale(1.3)"><use href="#tree"/></g>
+  <g transform="translate(1060 165)"><use href="#tree"/></g>
+  <g transform="translate(995 168)"><path d="m0-27 35 19v74L0 47Z" fill="#181e2e"/><path d="m35-8 14-8v74l-14 8Z" fill="#111724"/><path d="m8-9 19 10v47L8 38Z" fill="url(#portal)"/><path d="m0-27 14-8L49-16 35-8Z" fill="#34374c"/></g>
+  <g transform="translate(1160 295) scale(.65)"><use href="#cube"/><use href="#cube" x="35" y="20"/></g>
+  <rect x="530" width="220" height="410" fill="url(#fade)"/>
+  <g font-family="Arial, Helvetica, sans-serif">
+    <g transform="translate(55 55)" fill="none" stroke="#d6e7bf" stroke-width="2.5"><path d="m0 0 13-8 13 8v16l-13 8L0 16Z"/><path d="m0 0 13 8 13-8M13 8v16"/></g>
+    <text x="99" y="69" fill="#eef4e7" font-size="19" font-weight="700" letter-spacing="5">BLOCKLAND</text>
+    <text x="55" y="123" fill="#b6d58e" font-size="12" font-weight="700" letter-spacing="3">MINECRAFTGRA · BROWSER EDITION</text>
+    <text x="52" y="187" fill="#f2f6e9" font-size="53" font-weight="700">Buduj. Odkrywaj.</text>
+    <text x="52" y="247" fill="#c9e6a3" font-size="53" font-weight="700">Graj razem.</text>
+    <text x="55" y="290" fill="#b9cbbb" font-size="17">Własny świat zaczyna się od pierwszego bloku.</text>
+    <g fill="#d9e8c9" font-size="11" font-weight="700" letter-spacing="1.5"><text x="56" y="361">3 WYMIARY</text><text x="192" y="361">MULTIPLAYER</text><text x="347" y="361">PC + TELEFON</text></g>
+    <g fill="#b8d390" opacity=".6"><circle cx="169" cy="357" r="2"/><circle cx="324" cy="357" r="2"/></g>
+  </g>
+</svg>

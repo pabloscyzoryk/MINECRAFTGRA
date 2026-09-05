@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "framework": null,
+  "buildCommand": "npm run build",
+  "outputDirectory": "public",
+  "installCommand": "npm ci",
+  "functions": {
+    "api/game.js": {
+      "maxDuration": 300,
+      "memory": 1024
+    }
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store"
+        }
+      ]
+    }
+  ],
+  "regions": [
+    "fra1"
+  ]
+}

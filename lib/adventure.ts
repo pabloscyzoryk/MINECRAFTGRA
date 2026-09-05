@@ -1,0 +1,359 @@
+import type { Game } from "./engine";
+import { BIOMES, findBiome } from "./biomes";
+import { hash } from "./world";
+import { fromCounts, chestCounts, type ChestSlots } from "./chest-slots";
+export type AdventureData = {
+  chestSlots: Record<string, ChestSlots>;
+  discovered: string[];
+  opened: number;
+  harvested: number;
+  armor: number;
+  awards: string[];
+  storage: Record<string, Record<number, number>>;
+  crops: Record<string, number>;
+  spawn: { x: number; y: number; z: number } | null;
+  waypoint: { x: number; z: number; name: string } | null;
+};
+export const newAdventure = (): AdventureData => ({
+  chestSlots: {},
+  discovered: [],
+  opened: 0,
+  harvested: 0,
+  armor: 0,
+  awards: [],
+  storage: {},
+  crops: {},
+  spawn: null,
+  waypoint: null,
+});
+export class Adventure {
+  data: AdventureData = newAdventure();
+  currentChest = "";
+  timer = 0;
+  growthTimer = 0;
+  constructor(public game: Game) {}
+  reset() {
+    this.data = newAdventure();
+    this.currentChest = "";
+  }
+  key(x: number, y: number, z: number) {
+    return this.game.world.dimension + ":" + x + "," + y + "," + z;
+  }
+  quests() {
+    const g = this.game,
+      d = this.data;
+    return [
+      {
+        id: "miner",
+        name: "Pierwszy tunel",
+        description: "Wydobądź 50 bloków.",
+        value: g.mined,
+        target: 50,
+        reward: 40,
+      },
+      {
+        id: "builder",
+        name: "Mój kawałek świata",
+        description: "Postaw 30 bloków.",
+        value: g.placed,
+        target: 30,
+        reward: 50,
+      },
+      {
+        id: "explorer",
+        name: "Za kolejnym horyzontem",
+        description: "Odkryj 5 różnych biomów.",
+        value: d.discovered.length,
+        target: 5,
+        reward: 100,
+      },
+      {
+        id: "collector",
+        name: "Śladami dawnych osad",
+        description: "Otwórz 3 skrzynie w strukturach.",
+        value: d.opened,
+        target: 3,
+        reward: 100,
+      },
+      {
+        id: "farmer",
+        name: "Od ziarna do chleba",
+        description: "Zbierz 10 dojrzałych upraw.",
+        value: d.harvested,
+        target: 10,
+        reward: 80,
+      },
+      {
+        id: "diamond",
+        name: "Diamentowa epoka",
+        description: "Zdobądź diamentowy kilof.",
+        value: g.inventory[103] > 0 ? 1 : 0,
+        target: 1,
+        reward: 100,
+      },
+      {
+        id: "nether",
+        name: "Po drugiej stronie ognia",
+        description: "Odwiedź Nether.",
+        value: g.visited.includes("nether") ? 1 : 0,
+        target: 1,
+        reward: 100,
+      },
+      {
+        id: "dragon",
+        name: "Koniec jest początkiem",
+        description: "Pokonaj smoka Endu.",
+        value: g.won ? 1 : 0,
+        target: 1,
+        reward: 200,
+      },
+    ];
+  }
+  snapshot() {
+    const d = this.data,
+      p = this.game.position,
+      w = d.waypoint;
+    return {
+      discovered: [...d.discovered],
+      opened: d.opened,
+      harvested: d.harvested,
+      armor: d.armor,
+      awards: [...d.awards],
+      quests: this.quests(),
+      chest: { ...d.storage[this.currentChest] },
+      chestSlots: this.chestSlots().map((s) => (s ? { ...s } : null)),
+      waypoint: w
+        ? {
+            ...w,
+            distance: Math.round(Math.hypot(w.x - p.x, w.z - p.z)),
+            angle: ((Math.atan2(w.x - p.x, -(w.z - p.z)) + this.game.yaw) * 180) / Math.PI,
+          }
+        : null,
+    };
+  }
+  tick(dt: number) {
+    const g = this.game,
+      d = this.data;
+    this.timer += dt;
+    this.growthTimer += dt;
+    if (!g.net && this.growthTimer >= 1) {
+      const elapsed = this.growthTimer;
+      this.growthTimer = 0;
+      for (const key of Object.keys(d.crops)) {
+        if (!key.startsWith(g.world.dimension + ":")) continue;
+        const [x, y, z] = key.split(":")[1].split(",").map(Number);
+        if (!g.world.chunks.has(Math.floor(x / 16) + "," + Math.floor(z / 16))) continue;
+        const id = g.world.get(x, y, z);
+        if (![64, 65, 66].includes(id)) {
+          delete d.crops[key];
+          continue;
+        }
+        if (id === 66) continue;
+        let wet = false;
+        for (let dx = -4; dx <= 4 && !wet; dx++)
+          for (let dz = -4; dz <= 4; dz++) if (g.world.get(x + dx, y - 1, z + dz) === 7) wet = true;
+        d.crops[key] += elapsed * (wet ? 1 : 0.18);
+        const next = d.crops[key] >= 60 ? 66 : d.crops[key] >= 30 ? 65 : 64;
+        if (next !== id) g.world.set(x, y, z, next);
+      }
+    }
+    if (this.timer < 1) return;
+    this.timer = 0;
+    if (g.world.dimension === "overworld") {
+      const b = g.world.biomeInfo(g.position.x, g.position.z);
+      if (!d.discovered.includes(b.id)) {
+        d.discovered.push(b.id);
+        g.xp += 15;
+        g.notify("Nowy biom: " + b.name + " • +15 PD");
+      }
+    }
+    if (d.armor && !(g.inventory[d.armor] > 0)) d.armor = 0;
+    for (const q of this.quests())
+      if (q.value >= q.target && !d.awards.includes(q.id)) {
+        d.awards.push(q.id);
+        g.xp += q.reward;
+        g.audio.play("craft");
+        g.notify("Osiągnięcie: " + q.name + " • +" + q.reward + " PD");
+      }
+  }
+  chestSlots() {
+    if (!this.currentChest) return Array(27).fill(null) as ChestSlots;
+    this.data.chestSlots ??= {};
+    return (this.data.chestSlots[this.currentChest] ??= fromCounts(
+      this.data.storage[this.currentChest] ?? {},
+    ));
+  }
+  setChestSlots(slots: ChestSlots) {
+    this.data.chestSlots[this.currentChest] = slots;
+    this.data.storage[this.currentChest] = chestCounts(slots);
+  }
+  openChest(x: number, y: number, z: number) {
+    if (this.game.net) {
+      this.game.net.openChest(x, y, z);
+      return;
+    }
+    const g = this.game,
+      key = this.key(x, y, z);
+    this.currentChest = key;
+    if (!this.data.storage[key]) {
+      const placed = Object.prototype.hasOwnProperty.call(g.world.edits, key);
+      let loot: Record<number, number> = {};
+      if (!placed) {
+        loot = {
+          107: 3,
+          113: 16,
+          110: 2 + Math.floor(hash(x, z, g.world.seed) * 4),
+          116: 6,
+        };
+        if (Math.hypot(x, z) > 29) {
+          loot[119] = 1;
+          loot[111] = 1 + Math.floor(hash(z, x, g.world.seed + 8) * 3);
+        }
+        this.data.opened++;
+      }
+      this.data.storage[key] = loot;
+    }
+    g.audio.play("place");
+    g.pause("chest");
+  }
+  transfer(id: number, toChest: boolean) {
+    if (this.game.net) return;
+    const g = this.game,
+      storage = this.data.storage[this.currentChest];
+    if (!storage) return;
+    const from = toChest ? g.inventory : storage,
+      to = toChest ? storage : g.inventory,
+      n = from[id] ?? 0;
+    if (n < 1) return;
+    to[id] = (to[id] ?? 0) + n;
+    delete from[id];
+    g.audio.play("place");
+    g.emit();
+  }
+  takeAll() {
+    for (const id of Object.keys(this.data.storage[this.currentChest] ?? {}))
+      this.transfer(Number(id), false);
+    this.game.notify("Zawartość skrzyni przeniesiona do ekwipunku.");
+  }
+  mineSpecial(id: number, x: number, y: number, z: number) {
+    const g = this.game,
+      key = this.key(x, y, z);
+    if ([64, 65, 66].includes(id)) {
+      delete this.data.crops[key];
+      g.add(116, id === 66 ? 3 : 1);
+      if (id === 66) {
+        g.add(117, 2);
+        this.data.harvested++;
+      }
+      return true;
+    }
+    if (id === 42) {
+      g.add(hash(x, z, Math.floor(g.clock)) > 0.78 ? 124 : 42);
+      return true;
+    }
+    if (id === 79) {
+      if (hash(x, z, Math.floor(g.clock)) > 0.35) g.add(116);
+      return true;
+    }
+    if (id === 61 && this.data.storage[key]) {
+      for (const [item, n] of Object.entries(this.data.storage[key])) g.add(Number(item), n);
+      this.data.storage[key] = {};
+      delete this.data.chestSlots[key];
+    }
+    return false;
+  }
+  plant(x: number, y: number, z: number) {
+    const g = this.game;
+    if (g.world.dimension !== "overworld") {
+      g.notify("Pszenica rośnie w Nadziemiu.");
+      return;
+    }
+    if (g.world.get(x, y - 1, z) !== 63 || g.world.get(x, y, z) !== 0) {
+      g.notify("Posadź nasiona na pustej uprawnej ziemi.");
+      return;
+    }
+    if (g.mode !== "creative" && !(g.inventory[116] > 0)) return;
+    g.world.set(x, y, z, 64);
+    this.data.crops[this.key(x, y, z)] = 0;
+    if (g.mode !== "creative") g.inventory[116]--;
+    g.audio.play("place");
+    g.actionCooldown = 0.2;
+    g.emit();
+  }
+  bed(x: number, y: number, z: number) {
+    const g = this.game;
+    if (g.world.dimension !== "overworld") {
+      g.notify("Bezpieczny sen jest możliwy w Nadziemiu.");
+      return;
+    }
+    for (const [dx, dz] of [
+      [0, 1],
+      [0, -1],
+      [1, 0],
+      [-1, 0],
+    ])
+      if (!g.world.solid(x + dx, y, z + dz) && !g.world.solid(x + dx, y + 1, z + dz)) {
+        this.data.spawn = { x: x + dx + 0.5, y, z: z + dz + 0.5 };
+        break;
+      }
+    if (g.clock % 600 > 330) {
+      g.clock = Math.ceil(g.clock / 600) * 600 + 90;
+      g.health = Math.min(20, g.health + 6);
+      g.notify("Dzień dobry! Punkt odrodzenia ustawiony przy łóżku.");
+    } else g.notify("Punkt odrodzenia ustawiony. Możesz spać po zmroku.");
+    g.audio.play("craft");
+    g.actionCooldown = 1;
+    g.save(false);
+  }
+  respawn() {
+    const p = this.data.spawn,
+      g = this.game;
+    if (p) {
+      g.ensure(p.x, p.z, true);
+      g.position.set(p.x, p.y, p.z);
+      if (g.collision(g.position, 1.75)) g.position.y = g.world.surface(p.x, p.z) + 0.05;
+    }
+  }
+  locate(id: string, teleport = false) {
+    const g = this.game,
+      r = findBiome(id, g.world.seed, g.position.x, g.position.z);
+    if (!r) {
+      g.notify("Nie znaleziono tego biomu w pobliżu.");
+      return;
+    }
+    this.data.waypoint = { x: r.x, z: r.z, name: r.biome.name };
+    if (teleport && g.mode === "creative") {
+      if (g.world.dimension !== "overworld") g.travel("overworld");
+      g.ensure(r.x, r.z, true);
+      g.position.set(r.x + 0.5, g.world.surface(r.x, r.z) + 0.1, r.z + 0.5);
+      g.velocity.set(0, 0, 0);
+    }
+    g.notify("Cel wyprawy: " + r.biome.name);
+    g.emit();
+  }
+  clearWaypoint() {
+    this.data.waypoint = null;
+    this.game.emit();
+  }
+  equipArmor(id: number) {
+    if (id !== 121 && id !== 122) return;
+    if (this.game.mode === "creative" && !this.game.inventory[id]) this.game.add(id, 1);
+    if (this.game.inventory[id] > 0) {
+      this.data.armor = this.data.armor === id ? 0 : id;
+      this.game.notify(this.data.armor ? "Pancerz założony." : "Pancerz zdjęty.");
+    }
+  }
+  restore(value: Partial<AdventureData> | undefined) {
+    this.reset();
+    if (!value || typeof value !== "object") return;
+    this.data = { ...this.data, ...value };
+    this.data.discovered = Array.isArray(value.discovered)
+      ? value.discovered.filter((id) => BIOMES.some((b) => b.id === id))
+      : [];
+    this.data.awards = Array.isArray(value.awards)
+      ? value.awards.filter((id) => typeof id === "string")
+      : [];
+    this.data.storage = value.storage && typeof value.storage === "object" ? value.storage : {};
+    this.data.crops = value.crops && typeof value.crops === "object" ? value.crops : {};
+  }
+}
